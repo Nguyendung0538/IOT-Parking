@@ -36,6 +36,10 @@
 #define PIN_SENSOR_GATE_IN  35  // Cảm biến phía trong bãi (S_IN)
 
 // Cảm biến hồng ngoại 4 ô đỗ xe (LM393, Active LOW)
+#define NUM_SLOTS      4
+#define ZONE_A_SLOTS   2
+#define ZONE_B_SLOTS   2
+
 #define PIN_SLOT_A1 25
 #define PIN_SLOT_A2 26
 #define PIN_SLOT_B1 27
@@ -43,6 +47,7 @@
 
 // Mức logic tích cực (LM393 xuất LOW khi phát hiện vật cản)
 #define SENSOR_ACTIVE_LEVEL LOW
+
 
 // ==========================================
 // CÁC HẰNG SỐ THỜI GIAN & AN TOÀN (NON-BLOCKING)
