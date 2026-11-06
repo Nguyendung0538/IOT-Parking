@@ -5,6 +5,7 @@
 #include <LiquidCrystal_I2C.h>
 #include <U8g2lib.h>
 #include "config.h"
+#include "ParkingMonitor.h"
 #include "GateController.h"
 
 class DisplayManager {
@@ -14,7 +15,10 @@ public:
     // Khởi tạo LCD 1602 và OLED SH1106
     void begin();
 
-    // Cập nhật giao diện màn hình non-blocking
+    // Cập nhật giao diện toàn diện từ ParkingMonitor & GateController
+    void update(const ParkingMonitor& parking, const GateController& gate);
+
+    // Cập nhật giao diện (hỗ trợ tương thích ngược)
     void update(uint8_t totalAvail, uint8_t availA, uint8_t availB,
                 bool barrierOpen, GateEvent lastEvent);
 
@@ -35,14 +39,18 @@ private:
     GateEvent activeEvent;
     GateEvent lastHandledEvent;
 
-    // Bộ nhớ đệm OLED để tối ưu tốc độ vẽ
+    // Bộ nhớ đệm OLED để tối ưu tốc độ vẽ (chỉ vẽ lại khi có biến động)
     uint8_t cachedAvailA;
     uint8_t cachedAvailB;
+    bool cachedSlotOcc[NUM_SLOTS];
+    bool cachedSlotRes[NUM_SLOTS];
+    bool cachedEnteringGuidance;
+    char cachedAssignedSlot[8];
     unsigned long lastOledRefreshTime;
 
     // Các hàm nội bộ
-    void updateLcd(uint8_t totalAvail, uint8_t availA, uint8_t availB, GateEvent lastEvent);
-    void updateOled(uint8_t availA, uint8_t availB);
+    void updateLcd(const ParkingMonitor& parking, const GateController& gate);
+    void updateOled(const ParkingMonitor& parking, const GateController& gate);
 };
 
 #endif // DISPLAY_MANAGER_H

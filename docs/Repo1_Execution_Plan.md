@@ -44,57 +44,58 @@
 
 ---
 
-### PHASE S2 — NÂNG CẤP FIRMWARE ESP32 CHÍNH & VIẾT FIRMWARE ESP32-CAM
+### PHASE S2 — NÂNG CẤP FIRMWARE ESP32 CHÍNH & VIẾT FIRMWARE ESP32-CAM (ĐÃ HOÀN THÀNH ✅)
 
 #### Bước S2.1: Bổ sung mặt nạ Đặt chỗ trong `ParkingMonitor`
-- [ ] Thêm mảng `bool reservedState[NUM_SLOTS]` vào `ParkingMonitor.h`.
-- [ ] Thêm các phương thức:
+- [x] Thêm mảng `bool reservedState[NUM_SLOTS]` vào `ParkingMonitor.h`.
+- [x] Thêm các phương thức:
   ```cpp
-  bool setReservedState(uint8_t slotIndex, bool reserved);
   bool setReservedMask(bool a1, bool a2, bool b1, bool b2);
   bool isReserved(uint8_t slotIndex) const;
   bool isSlotAvailable(uint8_t slotIndex) const; // !isOccupied(i) && !isReserved(i)
   ```
-- [ ] Cập nhật `getAvailableA()`, `getAvailableB()`, `getTotalAvailable()` và `isFull()` dựa trên `isSlotAvailable(i)`.
+- [x] Cập nhật `getAvailableA()`, `getAvailableB()`, `getTotalAvailable()` và `isFull()` dựa trên `isSlotAvailable(i)`.
 
 #### Bước S2.2: Bổ sung trạng thái `WAIT_AUTH` & Fallback 8s trong `GateController`
-- [ ] Mở rộng `enum GateState` thêm `GATE_STATE_WAIT_AUTH_IN` và `GATE_STATE_WAIT_AUTH_OUT`.
-- [ ] Mở rộng `enum GateEvent` thêm `GATE_EVENT_WAITING_AUTH`.
-- [ ] Thêm hằng số `#define GATE_AUTH_TIMEOUT_MS 8000` trong `include/config.h`.
-- [ ] Thêm các phương thức giao tiếp với `ParkingNetworkClient`:
+- [x] Mở rộng `enum GateState` thêm `GATE_STATE_WAIT_AUTH_IN` và `GATE_STATE_WAIT_AUTH_OUT`.
+- [x] Mở rộng `enum GateEvent` thêm `GATE_EVENT_WAITING_AUTH`.
+- [x] Thêm hằng số `#define GATE_AUTH_TIMEOUT_MS 8000` trong `include/config.h`.
+- [x] Thêm các phương thức giao tiếp với `ParkingNetworkClient`:
   ```cpp
-  bool consumePendingAuthRequest(uint32_t& outSeq, bool& outIsEntering);
+  bool consumePendingAuthRequest(uint32_t& outSeq, const char*& outDirection);
+  bool consumeOfflineFallbackEvent(uint32_t& outSeq, bool& outEntering);
   void handleBackendCommand(uint32_t seq, bool allowOpen, const char* plate, const char* assignedSlot);
   const char* getActivePlate() const;
   const char* getAssignedSlot() const;
   ```
-- [ ] Logic Fallback: Nếu đang ở `WAIT_AUTH_IN` / `WAIT_AUTH_OUT` mà quá `8000ms` (hoặc khi `ENABLE_WIFI == false`), tự động duyệt cục bộ (`!parkingFull` đối với chiều vào, luôn mở đối với chiều ra).
+- [x] Logic Fallback: Nếu đang ở `WAIT_AUTH_IN` / `WAIT_AUTH_OUT` mà quá `8000ms` (hoặc khi `ENABLE_WIFI == false`), tự động duyệt cục bộ (`!parkingFull` đối với chiều vào, luôn mở đối với chiều ra).
 
 #### Bước S2.3: Nâng cấp `DisplayManager` hiển thị Biển số & Ô được gán
-- [ ] Cập nhật `DisplayManager::update(...)` nhận thêm `const ParkingMonitor& parking` và `const GateController& gate` (hoặc `plate`, `assignedSlot`).
-- [ ] **LCD 1602:**
+- [x] Cập nhật `DisplayManager::update(...)` nhận thêm `const ParkingMonitor& parking` và `const GateController& gate`.
+- [x] **LCD 1602:**
   - Khi `GATE_EVENT_WAITING_AUTH`: `DANG NHAN DIEN..` / `VUI LONG CHO...`
-  - Khi `GATE_EVENT_CAR_ENTERING` có biển số: `MOI VAO: O A2` / `51A-123.45`
-  - Khi `GATE_EVENT_CAR_EXITING` có biển số: `TAM BIET QUY KH` / `51A-123.45`
-- [ ] **OLED 1.3":**
-  - Khi xe vừa được duyệt vào và có `assignedSlot` (vd `"A2"`): vẽ mũi tên lớn hướng về khu của `assignedSlot` kèm nhãn `-> A2`.
-  - Dòng dưới hiển thị trạng thái từng ô: `A1:X A2:R B1:_ B2:_` (`X` = có xe, `R` = đã đặt, `_` = trống).
+  - Khi `GATE_EVENT_CAR_ENTERING` có biển số: `MOI VAO -> O A1` / `BS: 51A-123.45`
+  - Khi `GATE_EVENT_CAR_EXITING` có biển số: `TAM BIET <<     ` / `BS: 51A-123.45`
+- [x] **OLED 1.3":**
+  - Khi xe vừa được duyệt vào và có `assignedSlot` (vd `"A2"`): vẽ thanh điều hướng hướng về khu của `assignedSlot` kèm nhãn `RE PHAI O A2 ->` hoặc `<- RE TRAI O B1`.
+  - Hiển thị trạng thái chi tiết từng ô: `B1:%c B2:%c` và `A1:%c A2:%c` (`X` = có xe, `R` = đã đặt, `_` = trống).
 
 #### Bước S2.4: Chuyển `ParkingNetworkClient` sang MQTT (`PubSubClient`)
-- [ ] Thay `HTTPClient` bằng `WiFiClient` + `PubSubClient` (`setBufferSize(1024)`).
-- [ ] Kết nối non-blocking (thử lại mỗi `5000ms`), đăng ký LWT `TOPIC_GATE_STATUS = "offline"`, khi kết nối thành công thì publish `"online"` (retained) và subscribe `TOPIC_GATE_COMMAND`, `TOPIC_RESERVED`.
-- [ ] Xử lý callback MQTT:
+- [x] Thay `HTTPClient` bằng `WiFiClient` + `PubSubClient` (`setBufferSize(1024)`).
+- [x] Kết nối non-blocking (thử lại mỗi `5000ms`), đăng ký LWT `TOPIC_GATE_STATUS = "offline"`, khi kết nối thành công thì publish `"online"` (retained) và subscribe `TOPIC_GATE_COMMAND`, `TOPIC_RESERVED`.
+- [x] Xử lý callback MQTT:
   - Topic `TOPIC_RESERVED` → parse JSON `{"A1":..., "A2":..., "B1":..., "B2":...}` cập nhật `parking.setReservedMask(...)`.
   - Topic `TOPIC_GATE_COMMAND` → parse JSON `{"seq":..., "action":..., "plate":..., "assignedSlot":...}` gọi `gate.handleBackendCommand(...)`.
-- [ ] Publish `TOPIC_GATE_REQUEST` ngay khi `gate.consumePendingAuthRequest(...)` trả về `true`.
-- [ ] Publish `TOPIC_STATE` (retained) ngay khi trạng thái slot/barie thay đổi hoặc định kỳ mỗi `30000ms`.
+- [x] Publish `TOPIC_GATE_REQUEST` ngay khi `gate.consumePendingAuthRequest(...)` trả về `true`.
+- [x] Publish `TOPIC_STATE` (retained) ngay khi trạng thái slot/barie thay đổi hoặc định kỳ mỗi `30000ms`.
+- [x] Hàng đợi lưu Offline Fallback Events và tự động xả đồng bộ bù khi MQTT kết nối lại.
 
 #### Bước S2.5: Viết Firmware ESP32-CAM (`include/cam_config.h` & `src/cam/main_cam.cpp`)
-- [ ] Khai báo chân camera AI-Thinker OV2640 trong `include/cam_config.h`.
-- [ ] Trong `src/cam/main_cam.cpp`:
-  - Khởi tạo `esp_camera_init` (SVGA `800x600`, JPEG quality `12`, `fb_count = 2`).
+- [x] Khai báo chân camera AI-Thinker OV2640 trong `include/cam_config.h`.
+- [x] Trong `src/cam/main_cam.cpp`:
+  - Khởi tạo `esp_camera_init` (SVGA `800x600`, JPEG quality `12`, `fb_count = 2`, tự động hạ cấp nếu không có PSRAM).
   - Kết nối Wi-Fi & MQTT (`esp32_cam_01`, LWT `TOPIC_CAM_STATUS = "offline"`), subscribe `TOPIC_GATE_REQUEST`.
-  - Khi nhận `gate/request`: bật Flash LED (`GPIO 4`), xả 1 frame cũ, chụp 2 frame JPEG cách nhau `150ms`, tắt Flash LED, gửi `HTTP POST multipart/form-data` lên `http://<EDGE_IP>:8000/recognize`.
+  - Khi nhận `gate/request`: bật Flash LED (`GPIO 4`), xả 1 frame cũ, chụp 2 frame JPEG cách nhau `150ms`, tắt Flash LED, stream HTTP POST multipart/form-data trực tiếp lên `http://<EDGE_IP>:8000/recognize` kèm `X-API-Key`.
 
 ---
 
