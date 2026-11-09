@@ -187,13 +187,13 @@ iot-parking-station/
 
 ## 4. PHẦN B — THIẾT KẾ CHI TIẾT BACKEND BÃI ĐỖ (`edge-backend/`)
 
-### 4.1. Giao thức MQTT Nội bộ (Giữa Firmware và Edge Server)
+### 4.1. Giao thức MQTT Nội bộ (Giữa Firmware và Edge Server — Khớp Firmware Phase S2)
 
-| Topic | Chiều | QoS | Retain | Cấu trúc Payload JSON |
+| Topic | Chiều | QoS | Retain | Cấu trúc Payload JSON (Thực tế từ Firmware S2) |
 |:---|:---|:--:|:--:|:---|
-| `parking/ESP32_PARKING_01/state` | ESP32 Chính → Edge | 1 | ✅ | `{"device_id":"ESP32_PARKING_01","ts":1205,"gate":{"barrier_open":false,"last_action":"ENTER"},"slots":{"A1":true,"A2":false,"B1":false,"B2":false}}` |
-| `parking/ESP32_PARKING_01/gate/request` | ESP32 Chính → CAM & Edge | 1 | ❌ | `{"seq":42,"direction":"IN"}` hoặc `"OUT"` |
-| `parking/ESP32_PARKING_01/gate/command` | Edge → ESP32 Chính | 1 | ❌ | Cho vào: `{"seq":42,"action":"OPEN","direction":"IN","plate":"51A12345","assignedSlot":"A2"}`<br/>Từ chối: `{"seq":42,"action":"DENY","reason":"FULL"}` |
+| `parking/ESP32_PARKING_01/state` | ESP32 Chính → Edge | 1 | ✅ | `{"deviceId":"ESP32_PARKING_01","uptime":1205,"freeSlots":3,"totalSlots":4,"barrierOpen":false,"gateState":"IDLE","slots":{"A1":{"occupied":true,"reserved":false},"A2":{"occupied":false,"reserved":false},"B1":{"occupied":false,"reserved":false},"B2":{"occupied":false,"reserved":false}},"summary":{"zone_A_available":1,"zone_B_available":2,"total_available":3,"total_occupied":1,"total_reserved":0}}` |
+| `parking/ESP32_PARKING_01/gate/request` | ESP32 Chính → CAM & Edge | 1 | ❌ | Thường: `{"deviceId":"ESP32_PARKING_01","seq":42,"direction":"IN","freeSlots":3,"timestamp":120500}`<br/>Đồng bộ bù Offline Fallback: `{"deviceId":"ESP32_PARKING_01","seq":42,"direction":"IN","offlineFallback":true,"clientTimestamp":120500}` |
+| `parking/ESP32_PARKING_01/gate/command` | Edge → ESP32 Chính | 1 | ❌ | Cho vào: `{"seq":42,"action":"OPEN","plate":"51A12345","assignedSlot":"A2"}`<br/>Từ chối: `{"seq":42,"action":"DENY","plate":"51A12345","reason":"FULL"}`<br/>Mở khẩn cấp Admin: `{"seq":0,"action":"OPEN","plate":"ADMIN_OPEN","assignedSlot":""}` |
 | `parking/ESP32_PARKING_01/reserved` | Edge → ESP32 Chính | 1 | ✅ | `{"A1":true,"A2":false,"B1":false,"B2":false}` |
 | `parking/ESP32_PARKING_01/status` | ESP32 Chính → Edge (LWT) | 1 | ✅ | `"online"` / `"offline"` |
 | `parking/ESP32_CAM_01/status` | ESP32-CAM → Edge (LWT) | 1 | ✅ | `"online"` / `"offline"` |
@@ -221,14 +221,14 @@ Dựa trên `state_cache` trong RAM (gồm trạng thái vật lý `sensorOccupi
 
 ### 4.4. Hợp đồng Đồng bộ giữa Repo 1 (`edge-backend`) và Repo 2 (Firebase Cloud)
 - **Từ Repo 1 ghi lên Firestore/Storage của Repo 2:**
-  1. Sau khi phát MQTT `gate/command`, ghi ngay bản ghi vào `gateEvents/{eventId}`:
-     `{ deviceId, lotId: "lot_live_01", seq, direction, plateRaw, plateNormalized, confidence, decision, denyReason?, assignedSlotId?, matchedReservationId?, flags, status: "ok"|"unrecognized", imageUrl, cropImageUrl, latencyMs, serverTs }` → kích hoạt Cloud Function `onGateEventCreated` ở Repo 2.
-  2. Khi nhận MQTT `state` từ ESP32: cập nhật `lots/lot_live_01/slots/{slotId}.sensorOccupied`.
-  3. Khi nhận MQTT `status` (LWT): cập nhật `devices/{id}.online` và `lots/lot_live_01.deviceOnline`.
+  1. Sau khi phát MQTT `gate/command` (hoặc khi nhận sự kiện `offlineFallback`), ghi ngay bản ghi vào `gateEvents/{eventId}`:
+     `{ deviceId, lotId: "lot_live_01", seq, direction, plateRaw, plateNormalized, confidence, decision, denyReason?, assignedSlotId?, matchedReservationId?, flags, status: "ok"|"unrecognized"|"offline_fallback", imageUrl, cropImageUrl, latencyMs, serverTs }` → kích hoạt Cloud Function `onGateEventCreated` ở Repo 2.
+  2. Khi nhận MQTT `state` từ ESP32: cập nhật `lots/lot_live_01/slots/{slotId}` với `{ sensorOccupied, updatedAt: serverTs }` *(Trigger `onSlotUpdate.ts` của Repo 2 tự suy diễn `status` và `lots/lot_live_01.availableSlots`)*.
+  3. Khi nhận MQTT `status` (LWT): cập nhật `devices/{id}` với `{ online, lastSeen: serverTs, lotId: "lot_live_01", type }` và `lots/lot_live_01` với `{ deviceOnline, camOnline, edgeHeartbeatAt }`.
   4. Upload bất đồng bộ ảnh gốc & ảnh crop lên Cloud Storage (`gate/{yyyy-mm-dd}/...`).
 - **Từ Repo 2 đẩy xuống Repo 1 (qua Firestore `on_snapshot`):**
   1. Lắng nghe `reservations` (`lotId == "lot_live_01"`, `status == "active"`) → cập nhật `state_cache` và publish retained `parking/ESP32_PARKING_01/reserved`.
-  2. Lắng nghe `deviceCommands` (`status == "pending"`) → publish `gate/command` (`seq = 0, action = "OPEN"`) và cập nhật `status = "sent"`.
+  2. Lắng nghe `deviceCommands` (`deviceId == "ESP32_PARKING_01"`, `status == "pending"`) → publish `gate/command` (`seq = 0, action = "OPEN"`) và cập nhật `status = "sent"` (hoặc `status = "failed"`, `failReason = "EXPIRED"` nếu quá hạn 60s).
 
 ---
 

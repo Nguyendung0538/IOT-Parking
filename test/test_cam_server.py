@@ -4,7 +4,8 @@ import uvicorn
 from typing import List
 
 app = FastAPI()
-UPLOAD_DIR = "test_captures"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_DIR = os.path.join(BASE_DIR, "test_captures")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @app.post("/recognize")
