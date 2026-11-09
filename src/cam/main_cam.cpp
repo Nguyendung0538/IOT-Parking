@@ -19,6 +19,12 @@ static void onMqttMessage(char* topic, byte* payload, unsigned int length);
 static void captureAndUpload(uint32_t seq, const char* direction);
 
 void setup() {
+    // 1. Nháy nhanh đèn Flash LED 100ms ngay khi boot để báo hiệu phần cứng đang chạy
+    pinMode(PIN_CAM_FLASH_LED, OUTPUT);
+    digitalWrite(PIN_CAM_FLASH_LED, HIGH);
+    delay(100);
+    digitalWrite(PIN_CAM_FLASH_LED, LOW);
+
     Serial.begin(115200);
     delay(1000);
     Serial.println();
@@ -26,11 +32,7 @@ void setup() {
     Serial.println(F("   ESP32-CAM (OV2640) - Parking Camera Node      "));
     Serial.println(F("=================================================="));
 
-    // Khởi tạo chân đèn Flash LED tích hợp
-    pinMode(PIN_CAM_FLASH_LED, OUTPUT);
-    digitalWrite(PIN_CAM_FLASH_LED, LOW);
-
-    // 1. Khởi tạo phần cứng Camera OV2640
+    // 2. Khởi tạo phần cứng Camera OV2640
     initCamera();
 
     // 2. Cấu hình Wi-Fi & MQTT
