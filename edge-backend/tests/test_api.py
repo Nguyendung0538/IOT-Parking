@@ -6,7 +6,7 @@ def test_get_root(client):
     assert res.status_code == 200
     data = res.json()
     assert data["service"] == "iot-parking-edge-backend"
-    assert data["phase"] == "S3"
+    assert data["phase"] == "S4"
 
 
 def test_get_health_endpoint(client):
@@ -90,4 +90,16 @@ def test_debug_simulate_state(client, dummy_cloud):
     assert len(dummy_cloud.slot_updates) >= 1
     assert dummy_cloud.slot_updates[-1]["slotId"] == "A1"
     assert dummy_cloud.slot_updates[-1]["occupied"] is True
+
+
+def test_debug_recognize_test(client):
+    fake_img = b"\xff\xd8\xff\xe0\x00\x10JFIF"  # Header JPEG giả lập
+    files = [("images", ("frame_0.jpg", fake_img, "image/jpeg"))]
+    res = client.post("/debug/recognize-test", files=files)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "success"
+    assert data["plateNormalized"] == "51A12345"
+    assert data["plateDisplay"] == "51A-123.45"
+    assert data["isValid"] is True
 

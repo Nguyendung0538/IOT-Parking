@@ -1,0 +1,178 @@
+[
+  {
+    "description": "Biển ô tô 5 số chuẩn 1 dòng có gạch nối và chấm",
+    "raw": "51A-123.45",
+    "expectedNormalized": "51A12345",
+    "expectedDisplay": "51A-123.45",
+    "expectedValid": true
+  },
+  {
+    "description": "Biển ô tô 5 số có khoảng trắng lộn xộn",
+    "raw": "30E - 888.88",
+    "expectedNormalized": "30E88888",
+    "expectedDisplay": "30E-888.88",
+    "expectedValid": true
+  },
+  {
+    "description": "Biển ô tô 4 số cũ",
+    "raw": "29A-1234",
+    "expectedNormalized": "29A1234",
+    "expectedDisplay": "29A-1234",
+    "expectedValid": true
+  },
+  {
+    "description": "Biển xe máy 5 số chuẩn",
+    "raw": "59-X1 123.45",
+    "expectedNormalized": "59X112345",
+    "expectedDisplay": "59X1-123.45",
+    "expectedValid": true
+  },
+  {
+    "description": "Biển xe máy 4 số cũ",
+    "raw": "29-B1 9999",
+    "expectedNormalized": "29B19999",
+    "expectedDisplay": "29B1-9999",
+    "expectedValid": true
+  },
+  {
+    "description": "Biển xe máy seri 2 chữ cái (50cc / điện)",
+    "raw": "43-AA 567.89",
+    "expectedNormalized": "43AA56789",
+    "expectedDisplay": "43AA-567.89",
+    "expectedValid": true
+  },
+  {
+    "description": "Sửa lỗi OCR nhầm số 5 thành chữ S ở mã tỉnh",
+    "raw": "S1A-123.45",
+    "expectedNormalized": "51A12345",
+    "expectedDisplay": "51A-123.45",
+    "expectedValid": true
+  },
+  {
+    "description": "Sửa lỗi OCR nhầm số 8 thành chữ B ở mã tỉnh",
+    "raw": "B0A-12345",
+    "expectedNormalized": "80A12345",
+    "expectedDisplay": "80A-123.45",
+    "expectedValid": true
+  },
+  {
+    "description": "Sửa lỗi OCR nhầm số 1 thành chữ I ở mã tỉnh",
+    "raw": "I8A-999.99",
+    "expectedNormalized": "18A99999",
+    "expectedDisplay": "18A-999.99",
+    "expectedValid": true
+  },
+  {
+    "description": "Sửa lỗi OCR nhầm chữ A thành số 4 ở seri",
+    "raw": "514-123.45",
+    "expectedNormalized": "51A12345",
+    "expectedDisplay": "51A-123.45",
+    "expectedValid": true
+  },
+  {
+    "description": "Sửa lỗi OCR nhầm chữ B thành số 8 ở seri",
+    "raw": "308-888.88",
+    "expectedNormalized": "30B88888",
+    "expectedDisplay": "30B-888.88",
+    "expectedValid": true
+  },
+  {
+    "description": "Sửa lỗi OCR nhầm chữ D thành số 0 ở seri",
+    "raw": "510-123.45",
+    "expectedNormalized": "51D12345",
+    "expectedDisplay": "51D-123.45",
+    "expectedValid": true
+  },
+  {
+    "description": "Sửa lỗi OCR nhầm chữ S thành số 5 ở seri",
+    "raw": "605-123.45",
+    "expectedNormalized": "60S12345",
+    "expectedDisplay": "60S-123.45",
+    "expectedValid": true
+  },
+  {
+    "description": "Sửa lỗi OCR nhầm số 5 thành chữ S ở đuôi",
+    "raw": "51A-123.4S",
+    "expectedNormalized": "51A12345",
+    "expectedDisplay": "51A-123.45",
+    "expectedValid": true
+  },
+  {
+    "description": "Sửa lỗi OCR nhầm số 0 thành chữ O ở đuôi",
+    "raw": "51A-123.4O",
+    "expectedNormalized": "51A12340",
+    "expectedDisplay": "51A-123.40",
+    "expectedValid": true
+  },
+  {
+    "description": "Sửa lỗi OCR nhầm số 1 thành chữ I/L ở đuôi",
+    "raw": "30E-123.4I",
+    "expectedNormalized": "30E12341",
+    "expectedDisplay": "30E-123.41",
+    "expectedValid": true
+  },
+  {
+    "description": "Sửa lỗi OCR nhầm số 8 thành chữ B ở đuôi",
+    "raw": "29A-8B8.8B",
+    "expectedNormalized": "29A88888",
+    "expectedDisplay": "29A-888.88",
+    "expectedValid": true
+  },
+  {
+    "description": "Sửa lỗi OCR nhầm số 2 thành chữ Z ở đuôi",
+    "raw": "51F-22Z.61",
+    "expectedNormalized": "51F22261",
+    "expectedDisplay": "51F-222.61",
+    "expectedValid": true
+  },
+  {
+    "description": "Biển xe máy có dấu chấm",
+    "raw": "59-H1 549.86",
+    "expectedNormalized": "59H154986",
+    "expectedDisplay": "59H1-549.86",
+    "expectedValid": true
+  },
+  {
+    "description": "Biển số xe máy nhầm chữ O thành số 0 ở đuôi",
+    "raw": "59-H1 549.8O",
+    "expectedNormalized": "59H154980",
+    "expectedDisplay": "59H1-549.80",
+    "expectedValid": true
+  },
+  {
+    "description": "Chuỗi rác quá ngắn",
+    "raw": "123",
+    "expectedNormalized": "123",
+    "expectedDisplay": "123",
+    "expectedValid": false
+  },
+  {
+    "description": "Chuỗi chữ không có số",
+    "raw": "ABCDEFGH",
+    "expectedNormalized": "ABCDEFGH",
+    "expectedDisplay": "ABCDEFGH",
+    "expectedValid": false
+  },
+  {
+    "description": "Mã tỉnh 00 không tồn tại ở VN",
+    "raw": "00A12345",
+    "expectedNormalized": "00A12345",
+    "expectedDisplay": "00A12345",
+    "expectedValid": false
+  },
+  {
+    "description": "Chuỗi rỗng",
+    "raw": "",
+    "expectedNormalized": "",
+    "expectedDisplay": "",
+    "expectedValid": false
+  },
+  {
+    "description": "Chuỗi ký tự đặc biệt linh tinh",
+    "raw": "!@#$%^&*",
+    "expectedNormalized": "",
+    "expectedDisplay": "",
+    "expectedValid": false
+  }
+]
+

@@ -94,11 +94,37 @@ def mock_mqtt():
 
 
 @pytest.fixture
-def client(cache, dummy_cloud, mock_mqtt):
+def mock_ai_pipeline():
+    m = MagicMock()
+    m.status = {
+        "gpuAvailable": True,
+        "device": "cuda:0",
+        "yoloLoaded": True,
+        "warmupDone": True,
+        "lastLatencyMs": 45.0,
+    }
+    mock_res = MagicMock()
+    mock_res.plate_raw = "51A12345"
+    mock_res.plate_normalized = "51A12345"
+    mock_res.plate_display = "51A-123.45"
+    mock_res.confidence = 0.95
+    mock_res.is_valid = True
+    mock_res.latency_ms = 42.0
+    mock_res.detector_used = "yolo"
+    mock_res.total_candidates = 1
+    mock_res.best_frame_index = 0
+    mock_res.crop_jpeg_bytes = b"fake_jpeg"
+    m.recognize_frames.return_value = mock_res
+    return m
+
+
+@pytest.fixture
+def client(cache, dummy_cloud, mock_mqtt, mock_ai_pipeline):
     app.state.test_mode = True
     app.state.cache = cache
     app.state.cloud = dummy_cloud
     app.state.mqtt = mock_mqtt
+    app.state.ai_pipeline = mock_ai_pipeline
     with TestClient(app) as c:
         yield c
     app.state.test_mode = False

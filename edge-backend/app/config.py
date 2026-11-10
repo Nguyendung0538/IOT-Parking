@@ -61,8 +61,10 @@ class Settings(BaseSettings):
 
     # 6. Ngưỡng AI (Phase S4/S5)
     YOLO_MODEL_PATH: str = "models/plate_yolo_s.pt"
-    YOLO_CONF_THRESHOLD: float = 0.5
-    OCR_CONF_THRESHOLD: float = 0.6
+    YOLO_CONF_THRESHOLD: float = 0.4
+    OCR_CONF_THRESHOLD: float = 0.5
+    USE_GPU: bool = True
+    PADDING_RATIO: float = 0.12
 
     # Generated Topic Properties (Không hardcode chuỗi rải rác)
     @property

@@ -22,6 +22,7 @@ from app.cloud.null_bridge import NullCloudBridge
 from app.config import settings
 from app.logging_setup import setup_logging
 from app.mqtt.bridge import MqttBridge
+from app.recognition.pipeline import PlateRecognitionPipeline
 from app.state_cache import StateCache
 
 setup_logging(level=settings.LOG_LEVEL)
@@ -36,7 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         return
 
     logger.info("==================================================")
-    logger.info("Khởi động Edge Backend Server (Phase S3)...")
+    logger.info("Khởi động Edge Backend Server (Phase S4 - AI Pipeline)...")
     logger.info("Device ID: %s | Cam ID: %s | Lot ID: %s", settings.DEVICE_ID, settings.CAM_DEVICE_ID, settings.LOT_ID)
     logger.info("MQTT Broker: %s:%d | Firebase Enabled: %s", settings.MQTT_HOST, settings.MQTT_PORT, settings.FIREBASE_ENABLED)
     logger.info("==================================================")
@@ -44,7 +45,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # 1. Khởi tạo RAM StateCache
     cache = StateCache(slot_ids=["A1", "A2", "B1", "B2"])
 
-    # 2. Khởi tạo CloudBridge (Firestore hoặc Null)
+    # 2. Khởi tạo AI Recognition Pipeline & GPU Warmup
+    ai_pipeline = PlateRecognitionPipeline(
+        model_path=settings.YOLO_MODEL_PATH,
+        conf_threshold=settings.YOLO_CONF_THRESHOLD,
+        padding_ratio=settings.PADDING_RATIO,
+        use_gpu=settings.USE_GPU,
+    )
+    ai_pipeline.warmup()
+
+    # 3. Khởi tạo CloudBridge (Firestore hoặc Null)
     cloud: CloudBridgeBase
     if settings.FIREBASE_ENABLED:
         logger.info("Chế độ Cloud: FIRESTORE (Đồng bộ thời gian thực với Cloud)")
@@ -53,18 +63,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Chế độ Cloud: NULL BRIDGE (Chạy độc lập / Giả lập, không kết nối Firebase)")
         cloud = NullCloudBridge()
 
-    # 3. Khởi tạo MQTT Bridge
+    # 4. Khởi tạo MQTT Bridge
     mqtt_bridge = MqttBridge(cache=cache, settings=settings, cloud=cloud)
 
-    # 4. Liên kết 2 chiều giữa Cloud Bridge và MQTT Bridge
+    # 5. Liên kết 2 chiều giữa Cloud Bridge và MQTT Bridge
     cloud.mqtt = mqtt_bridge
 
     # Gán vào app state để các API endpoint truy cập
     app.state.cache = cache
     app.state.cloud = cloud
     app.state.mqtt = mqtt_bridge
+    app.state.ai_pipeline = ai_pipeline
 
-    # 5. Khởi động các worker nền
+    # 6. Khởi động các worker nền
     cloud.start()
     mqtt_bridge.start()
 
@@ -105,7 +116,7 @@ def get_root():
     return {
         "service": "iot-parking-edge-backend",
         "version": "1.0.0",
-        "phase": "S3",
+        "phase": "S4",
         "docsUrl": "/docs",
         "healthUrl": "/health",
         "debugUrl": "/debug/state",

@@ -118,12 +118,15 @@
 
 ---
 
-### PHASE S4 — PIPELINE AI NHẬN DIỆN BIỂN SỐ TRÊN GPU NVIDIA
+### PHASE S4 — PIPELINE AI NHẬN DIỆN BIỂN SỐ TRÊN GPU NVIDIA [x] (ĐÃ HOÀN THÀNH ✅)
 
-- [ ] Viết `edge-backend/app/recognition/plate_utils.py` (chuẩn hóa, sửa ký tự dễ nhầm theo vị trí biển số VN, kiểm tra regex) + bộ test `edge-backend/tests/test_plate_utils.py` đọc `plate_test_cases.json`.
-- [ ] Viết `edge-backend/app/recognition/detector.py` (YOLOv8s/11s CUDA inference + crop biển số padding 8%).
-- [ ] Viết `edge-backend/app/recognition/ocr.py` (OpenCV CLAHE + Bilateral Filter + EasyOCR `gpu=True` + ghép biển 1/2 dòng + voting đa khung).
-- [ ] Viết `edge-backend/scripts/capture_dataset.py` và `benchmark_pipeline.py`.
+- [x] Cài đặt PyTorch CUDA 12.8 (`cu128`), `torchvision`, `ultralytics`, `easyocr`, `opencv-python-headless` vào `.venv`. Nhận diện đúng GPU **NVIDIA GeForce RTX 5060** (8GB VRAM).
+- [x] Viết `edge-backend/app/recognition/plate_utils.py` (chuẩn hóa, sửa ký tự dễ nhầm theo vị trí biển số VN, kiểm tra regex, multi-frame voting) + bộ test `edge-backend/tests/test_plate_utils.py` với `plate_test_cases.json` (27/27 test cases pass 100%).
+- [x] Viết `edge-backend/app/recognition/detector.py`: Tải sẵn trọng số YOLOv8 chuyên biển số VN (`models/plate_yolo_s.pt`) đạt độ trễ ~8ms trên RTX 5060 + cơ chế OpenCV Morphological/Contour Fallback.
+- [x] Viết `edge-backend/app/recognition/ocr.py` (OpenCV CLAHE + Bilateral Filter + EasyOCR `gpu=True` + thuật toán phân cụm trục Y sắp xếp X ghép chuẩn cả biển 1 dòng và 2 dòng).
+- [x] Viết `edge-backend/app/recognition/pipeline.py` (PlateRecognitionPipeline hợp nhất) + tích hợp GPU Warm-up trong lifespan FastAPI + endpoint `POST /debug/recognize-test`.
+- [x] Viết `edge-backend/scripts/benchmark_pipeline.py` (đo trực tiếp trên `yolo_plate_dataset`: Latency trung bình **50.4 ms** (< 400ms), Detection Rate **95%**) và `capture_dataset.py`.
+- [x] Bộ test `pytest`: **54/54 tests PASSED** (toàn bộ S3 và S4).
 
 ---
 

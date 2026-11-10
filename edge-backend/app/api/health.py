@@ -26,6 +26,15 @@ def get_health(request: Request) -> Dict[str, Any]:
     is_degraded = (not mqtt_connected) or state_stale or (not cloud_ok)
     overall_status = "degraded" if is_degraded else "ok"
 
+    lot_status = {
+        "sensorOccupied": snap.get("sensorOccupied", {}),
+        "reservedMask": snap.get("reservedMask", {}),
+        "freeSlotsPublic": snap.get("freeSlotsPublic", 0),
+    }
+
+    ai_pipeline = getattr(request.app.state, "ai_pipeline", None)
+    ai_status = ai_pipeline.status if ai_pipeline else {"gpuAvailable": False, "status": "disabled"}
+
     return {
         "status": overall_status,
         "mqtt": {
@@ -35,16 +44,13 @@ def get_health(request: Request) -> Dict[str, Any]:
             "parseErrors": mqtt.parse_errors,
         },
         "cloud": cloud_status,
+        "ai": ai_status,
         "devices": {
             "gateOnline": snap.get("gateOnline", False),
             "camOnline": snap.get("camOnline", False),
             "lastStateAgoS": last_state_ago,
             "stateStale": state_stale,
         },
-        "lot": {
-            "sensorOccupied": snap.get("sensorOccupied", {}),
-            "reservedMask": snap.get("reservedMask", {}),
-            "freeSlotsPublic": snap.get("freeSlotsPublic", 0),
-        },
+        "lot": lot_status,
     }
 

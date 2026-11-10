@@ -6,8 +6,8 @@ hoặc khi chạy ở chế độ mô phỏng / ngắt kết nối Firebase.
 
 from datetime import datetime, timedelta, timezone
 import time
-from typing import Any, Dict, Optional
-from fastapi import APIRouter, HTTPException, Request
+from typing import Any, Dict, List, Optional
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from app.models import ReservationItem, SlotState, StatePayload
@@ -160,3 +160,40 @@ def simulate_state(request: Request, body: SimulateStateRequest) -> Dict[str, An
         "diffs": diffs,
         "currentState": cache.snapshot(),
     }
+
+
+@router.post("/recognize-test")
+async def test_recognition(
+    request: Request,
+    images: List[UploadFile] = File(..., description="Ảnh JPEG chụp biển số xe (1 hoặc nhiều frame)"),
+) -> Dict[str, Any]:
+    """Kiểm thử trực tiếp Pipeline AI (YOLO + EasyOCR + Voting) qua upload ảnh."""
+    ai_pipeline = getattr(request.app.state, "ai_pipeline", None)
+    if not ai_pipeline:
+        raise HTTPException(status_code=503, detail="AI Pipeline chưa được khởi tạo trên server")
+
+    frames_bytes: List[bytes] = []
+    for img_file in images:
+        content = await img_file.read()
+        if content:
+            frames_bytes.append(content)
+
+    if not frames_bytes:
+        raise HTTPException(status_code=400, detail="Không có dữ liệu ảnh hợp lệ")
+
+    res = ai_pipeline.recognize_frames(frames_bytes)
+
+    return {
+        "status": "success",
+        "plateRaw": res.plate_raw,
+        "plateNormalized": res.plate_normalized,
+        "plateDisplay": res.plate_display,
+        "confidence": res.confidence,
+        "isValid": res.is_valid,
+        "latencyMs": res.latency_ms,
+        "detectorUsed": res.detector_used,
+        "totalCandidates": res.total_candidates,
+        "bestFrameIndex": res.best_frame_index,
+        "hasCropImage": res.crop_jpeg_bytes is not None,
+    }
+
