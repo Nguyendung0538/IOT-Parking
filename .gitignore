@@ -4,6 +4,7 @@
 .vscode/launch.json
 .vscode/ipch
 node_modules
+yolo_plate_dataset/
 
 # Python & Edge Backend
 __pycache__/

@@ -19,7 +19,7 @@
 
 ---
 
-## 0. TIẾN ĐỘ TRIỂN KHAI HIỆN TẠI (CẬP NHẬT 2026-11-06)
+## 0. TIẾN ĐỘ TRIỂN KHAI HIỆN TẠI (CẬP NHẬT 2026-11-10)
 
 | Giai đoạn | Hạng mục | Trạng thái | Chi tiết trong Codebase |
 |:---:|:---|:---:|:---|
@@ -30,7 +30,7 @@
 | **Phase F5** | Tích hợp vòng lặp chính `src/main.cpp` | ✅ **Đã xong (100%)** | Đã tích hợp chạy non-blocking trong [`main.cpp`](../src/main.cpp) và khung [`ParkingNetworkClient.cpp`](../src/ParkingNetworkClient.cpp) (đang ở chế độ HTTP cục bộ). |
 | **Phase S1** | Cấu trúc Multi-Env (`gate` + `cam`) & Mosquitto Broker | ✅ **Đã xong (100%)** | Đã tách `src/gate/`, `src/cam/main_cam.cpp`, `include/common_network.h`, `include/cam_config.h`, `platformio.ini` multi-env và `edge-backend/mosquitto/`. |
 | **Phase S2** | Nâng cấp ESP32 Chính (MQTT + Reserved + Auth 8s) & Code ESP32-CAM | ✅ **Đã xong (100%)** | Đã hoàn thiện `ParkingMonitor` (reservedMask), `GateController` (WAIT_AUTH + Offline Fallback 8s), `DisplayManager` (LCD/OLED), `ParkingNetworkClient` (MQTT PubSubClient + Ring Buffer) và `src/cam/main_cam.cpp`. |
-| **Phase S3** | Edge Server: MQTT ↔ Firestore Bridge & State Cache | ⏳ **Chưa làm (0%)** | Cần khởi tạo FastAPI, `state_cache.py`, `mqtt/bridge.py`, `cloud/firestore_bridge.py`. |
+| **Phase S3** | Edge Server: MQTT ↔ Firestore Bridge & State Cache | ✅ **Đã xong (100%)** | Đã hoàn thiện FastAPI, RAM [`StateCache`](../edge-backend/app/state_cache.py) RLock, [`MqttBridge`](../edge-backend/app/mqtt/bridge.py) paho-mqtt v2, [`FirestoreBridge`](../edge-backend/app/cloud/firestore_bridge.py) & [`NullCloudBridge`](../edge-backend/app/cloud/null_bridge.py), REST APIs `/health` & `/debug`, script mô phỏng [`simulate_gate.py`](../edge-backend/scripts/simulate_gate.py) và 22/22 unit tests. |
 | **Phase S4** | Thu thập Dataset & Pipeline AI YOLO + EasyOCR (CUDA) | ⏳ **Chưa làm (0%)** | Cần viết `capture_dataset.py`, fine-tune YOLOv8s/11s và hiện thực `detector.py`, `ocr.py`, `plate_utils.py`. |
 | **Phase S5** | Fast Gate Arbiter (< 0.5s), `POST /recognize` & Upload Storage nền | ⏳ **Chưa làm (0%)** | Cần hiện thực `gate_arbiter.py`, endpoint nhận ảnh từ CAM và luồng ghi `gateEvents` + upload ảnh bất đồng bộ. |
 | **Phase S6** | Kiểm thử tích hợp Sa hình & Chịu lỗi (`ST-01` → `ST-08`) | ⏳ **Chưa làm (0%)** | Thực hiện sau khi hoàn tất S1 → S5. |

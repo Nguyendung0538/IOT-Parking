@@ -99,14 +99,22 @@
 
 ---
 
-### PHASE S3 — XÂY DỰNG EDGE SERVER: MQTT BRIDGE & ĐỒNG BỘ FIRESTORE
+### PHASE S3 — XÂY DỰNG EDGE SERVER: MQTT BRIDGE & ĐỒNG BỘ FIRESTORE [x] (ĐÃ HOÀN THÀNH ✅)
 
-- [ ] Tạo `edge-backend/requirements.txt` (`fastapi`, `uvicorn[standard]`, `python-multipart`, `paho-mqtt`, `firebase-admin`, `pydantic-settings`, `opencv-python-headless`, `ultralytics`, `easyocr`, `pytest`, `httpx`).
-- [ ] Viết `edge-backend/app/config.py` và `edge-backend/app/state_cache.py` (quản lý thread-safe trạng thái 4 cảm biến, `active_reservations`, `pending_requests`).
-- [ ] Viết `edge-backend/app/mqtt/bridge.py`: kết nối Mosquitto, nhận `state`, `gate/request`, `status`; cung cấp hàm `publish_gate_command()` và `publish_reserved_mask()`.
-- [ ] Viết `edge-backend/app/cloud/firestore_bridge.py`:
-  - Đồng bộ `sensorOccupied` và `deviceOnline` lên Firestore.
-  - Mở `on_snapshot` lắng nghe `reservations` (`active`) và `deviceCommands` (`pending`) từ Repo 2 để đẩy xuống MQTT.
+- [x] Tạo `edge-backend/requirements.txt`, `requirements-dev.txt`, `.env.example`, `.env` (Python 3.12, `fastapi`, `uvicorn[standard]`, `paho-mqtt`, `firebase-admin`, `pydantic-settings`, `pytest`).
+- [x] Viết `edge-backend/app/config.py` và `edge-backend/app/state_cache.py` (quản lý thread-safe với RLock trạng thái 4 cảm biến, `active_reservations`, `pending_requests`, tính mặt nạ `reservedMask`, tính toán `free_slots_public`).
+- [x] Viết `edge-backend/app/mqtt/bridge.py`: kết nối Mosquitto bằng `paho-mqtt` CallbackAPIVersion.VERSION2, nhận `state`, `gate/request`, LWT `status`; cung cấp `publish_gate_command()` và `publish_reserved()` (retained).
+- [x] Viết `edge-backend/app/cloud/base.py`, `null_bridge.py` (chế độ giả lập độc lập khi `FIREBASE_ENABLED=false`) và `firestore_bridge.py`:
+  - Đồng bộ `sensorOccupied` (chỉ ghi diff) và `deviceOnline` lên Firestore.
+  - Mở `on_snapshot` lắng nghe `reservations` (`active`) và `deviceCommands` (`pending`, 60s TTL) từ Repo 2 để đẩy xuống MQTT.
+  - Đồng bộ `offline_fallback` events lên Firestore.
+- [x] Viết REST API endpoints:
+  - `edge-backend/app/api/health.py`: `GET /health` giám sát toàn diện MQTT, Cloud, thiết bị và bãi đỗ.
+  - `edge-backend/app/api/debug.py`: `GET /debug/state`, `POST /debug/reservations`, `DELETE /debug/reservations/{id}`, `POST /debug/open-gate`, `POST /debug/simulate-state`.
+  - `edge-backend/app/main.py`: Khởi tạo lifespan kết nối các bridge, hỗ trợ test mode.
+- [x] Viết công cụ mô phỏng phần cứng và bộ test kiểm thử:
+  - `edge-backend/scripts/simulate_gate.py`: CLI mô phỏng ESP32 Gate tương tác hai chiều qua MQTT.
+  - Bộ kiểm thử `pytest` 22/22 tests PASSED (`test_models.py`, `test_state_cache.py`, `test_mqtt_bridge.py`, `test_api.py`). Đã kiểm tra thực tế live server Uvicorn.
 
 ---
 
