@@ -6,7 +6,7 @@ def test_get_root(client):
     assert res.status_code == 200
     data = res.json()
     assert data["service"] == "iot-parking-edge-backend"
-    assert data["phase"] == "S4"
+    assert data["phase"] == "S5"
 
 
 def test_get_health_endpoint(client):

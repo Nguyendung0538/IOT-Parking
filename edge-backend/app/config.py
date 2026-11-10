@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     # 4. Timeout & TTL
     DEVICE_COMMAND_TTL_S: int = 60
     STATE_STALE_AFTER_S: int = 90
+    CAMERA_TIMEOUT_S: float = 5.0
+    LOCAL_CAPTURE_DIR: str = "data/captures"
 
     # 5. Firebase / Cloud Bridge
     FIREBASE_ENABLED: bool = False

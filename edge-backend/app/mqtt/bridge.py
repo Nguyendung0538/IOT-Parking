@@ -24,9 +24,10 @@ class MqttBridge:
     - Phát mặt nạ đặt chỗ `parking/{DEVICE_ID}/reserved` (Retained)
     """
 
-    def __init__(self, cache: StateCache, cloud_bridge: Any = None, cloud: Any = None, **kwargs: Any):
+    def __init__(self, cache: StateCache, cloud_bridge: Any = None, cloud: Any = None, arbiter: Any = None, **kwargs: Any):
         self.cache = cache
         self.cloud = cloud if cloud is not None else cloud_bridge
+        self.arbiter = arbiter
 
         self._connected = False
         self._last_message_at: float = 0.0
@@ -192,8 +193,10 @@ class MqttBridge:
                 )
         else:
             self.cache.add_pending_request(payload.seq, payload.direction)
+            if self.arbiter:
+                self.arbiter.on_gate_request(payload.seq, payload.direction)
             logger.info(
-                "[MQTT RX] Nhận gate/request (seq=%u, direction=%s) -> Lưu vào Cache (Phase S3: ESP32 sẽ tự Fallback sau 8s)",
+                "[MQTT RX] Nhận gate/request (seq=%u, direction=%s) -> Khởi tạo GateArbiter Timer 5.0s",
                 payload.seq,
                 payload.direction,
             )

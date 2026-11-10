@@ -245,32 +245,34 @@ flowchart LR
 ```
 
 ### PHASE S1 — CẤU TRÚC PLATFORMIO MULTI-ENV & MOSQUITTO BROKER
-- [ ] Tách thư mục `src/gate/` và `src/cam/` trong `platformio.ini`; tạo `include/common_network.h`.
-- [ ] Khởi tạo thư mục `edge-backend/`, cấu hình `mosquitto/mosquitto.conf`, `passwd`, `acl` và `docker-compose.yml`.
+- [x] Tách thư mục `src/gate/` và `src/cam/` trong `platformio.ini`; tạo `include/common_network.h`.
+- [x] Khởi tạo thư mục `edge-backend/`, cấu hình `mosquitto/mosquitto.conf`, `passwd`, `acl` và `docker-compose.yml`.
 
 **Đầu ra:** Biên dịch được cả 2 môi trường Firmware; Mosquitto Broker chạy ở cổng `1883` có xác thực mật khẩu và ACL.
 
 ### PHASE S2 — NÂNG CẤP FIRMWARE ESP32 CHÍNH & VIẾT FIRMWARE ESP32-CAM
-- [ ] Nâng cấp ESP32 chính: `reservedMask` trong `ParkingMonitor`, `WAIT_AUTH` + Fallback 8s trong `GateController`, hiển thị biển số & ô đỗ trên LCD/OLED, và `PubSubClient` non-blocking trong `ParkingNetworkClient`.
-- [ ] Viết `src/cam/main_cam.cpp` cho ESP32-CAM: nhận MQTT `gate/request`, bật flash, chụp 2 frame SVGA, gửi HTTP POST multipart.
+- [x] Nâng cấp ESP32 chính: `reservedMask` trong `ParkingMonitor`, `WAIT_AUTH` + Fallback 8s trong `GateController`, hiển thị biển số & ô đỗ trên LCD/OLED, và `PubSubClient` non-blocking trong `ParkingNetworkClient`.
+- [x] Viết `src/cam/main_cam.cpp` cho ESP32-CAM: nhận MQTT `gate/request`, bật flash, chụp 2 frame SVGA, gửi HTTP POST multipart.
 
 **Đầu ra:** Dùng lệnh `mosquitto_pub` điều khiển được barie, LCD, OLED; che cảm biến cổng kích hoạt được ESP32-CAM chụp và gửi ảnh về laptop.
 
 ### PHASE S3 — EDGE SERVER: MQTT BRIDGE & ĐỒNG BỘ FIRESTORE
-- [ ] Dựng khung FastAPI (`main.py`, `config.py`, `state_cache.py`, `/health`).
-- [ ] Hiện thực `mqtt/bridge.py` và `cloud/firestore_bridge.py`: đồng bộ 2 chiều trạng thái cảm biến 4 ô, trạng thái `online/offline` (LWT), mặt nạ `reserved` và lệnh `deviceCommands`.
+- [x] Dựng khung FastAPI (`main.py`, `config.py`, `state_cache.py`, `/health`).
+- [x] Hiện thực `mqtt/bridge.py` và `cloud/firestore_bridge.py`: đồng bộ 2 chiều trạng thái cảm biến 4 ô, trạng thái `online/offline` (LWT), mặt nạ `reserved` và lệnh `deviceCommands`.
 
 **Đầu ra:** Che cảm biến ô đỗ trên sa hình → Firestore cập nhật trong < 1s; tạo/huỷ reservation trên Firestore → OLED/LCD trên sa hình trừ/cộng chỗ trống ngay lập tức.
 
 ### PHASE S4 — DATASET SA HÌNH & PIPELINE AI YOLO + EASYOCR (CUDA)
-- [ ] Chạy `scripts/capture_dataset.py` chụp 200–300 ảnh biển số xe mô hình qua ESP32-CAM, gán nhãn và fine-tune YOLOv8s/11s (`models/plate_yolo_s.pt`).
-- [ ] Hiện thực `detector.py`, `ocr.py`, `plate_utils.py` + GPU Warm-up + pass 100% unit test với `plate_test_cases.json`.
+- [x] Chạy `scripts/capture_dataset.py` chụp 200–300 ảnh biển số xe mô hình qua ESP32-CAM, gán nhãn và fine-tune YOLOv8s/11s (`models/plate_yolo_s.pt`).
+- [x] Hiện thực `detector.py`, `ocr.py`, `plate_utils.py` + GPU Warm-up + pass 100% unit test với `plate_test_cases.json`.
 
 **Đầu ra:** Độ chính xác đọc biển số sa hình đạt **≥ 90%**, thời gian xử lý AI trên GPU NVIDIA **< 0.4s/lượt**.
 
 ### PHASE S5 — FAST GATE ARBITER, API `/recognize` & UPLOAD STORAGE NỀN
-- [ ] Hiện thực `gate_arbiter.py` (chọn slot ưu tiên reservation → Khu A → Khu B, chặn trùng `seq`, timer chờ ảnh 5s).
-- [ ] Hiện thực `POST /recognize`: chạy AI → gọi `gate_arbiter` → bắn MQTT `gate/command` ngay lập tức → chạy background task ghi `gateEvents` và upload ảnh lên Cloud Storage.
+- [x] Hiện thực `gate_arbiter.py` (chọn slot ưu tiên reservation → Khu A → Khu B, chặn trùng `seq`, timer chờ ảnh 5s).
+- [x] Hiện thực `POST /recognize`: chạy AI → gọi `gate_arbiter` → bắn MQTT `gate/command` ngay lập tức → chạy background task ghi `gateEvents` và upload ảnh lên Cloud Storage.
+
+**Đầu ra:** Xe mô hình chạm cảm biến cổng → chụp ảnh → nhận diện → barie mở kèm chỉ dẫn OLED trong **< 2.0 giây**; bản ghi `gateEvents` kèm ảnh xuất hiện đầy đủ trên Firestore.
 
 **Đầu ra:** Xe mô hình chạm cảm biến cổng → chụp ảnh → nhận diện → barie mở kèm chỉ dẫn OLED trong **< 2.0 giây**; bản ghi `gateEvents` kèm ảnh xuất hiện đầy đủ trên Firestore.
 

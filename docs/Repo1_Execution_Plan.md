@@ -130,12 +130,20 @@
 
 ---
 
-### PHASE S5 — FAST GATE ARBITER, API `/recognize` & UPLOAD STORAGE NỀN
+### PHASE S5 — FAST GATE ARBITER, API `/recognize` & UPLOAD STORAGE NỀN [x] (ĐÃ HOÀN THÀNH ✅)
 
-- [ ] Viết `edge-backend/app/arbiter/gate_arbiter.py`:
-  - Chọn slot tức thì (< 5ms) từ `state_cache`: ưu tiên khớp `reservation` → tiếp theo là ô trống `!sensorOccupied && !isReserved` theo thứ tự `A1 → A2 → B1 → B2`.
-  - Hẹn giờ `5.0s` khi nhận `gate/request`: nếu quá 5s không nhận được ảnh từ CAM thì tự động mở cổng (nếu còn chỗ) với cờ `unrecognized`.
-- [ ] Viết `edge-backend/app/api/recognize.py` (`POST /recognize`) và `edge-backend/app/cloud/storage_uploader.py` (upload ảnh nền sau khi đã bắn MQTT mở barie, ghi `gateEvents` lên Firestore).
+- [x] Viết `edge-backend/app/arbiter/gate_arbiter.py`:
+  - Phân xử mở cổng siêu tốc (< 5ms) từ `StateCache` trong RAM:
+    - Khi xe vào (`IN`): Ưu tiên khớp `activeReservations` theo biển số. Nếu ô đã đặt bị đỗ đè vật lý (`sensorOccupied == True`) thì tự động chuyển sang ô trống dự phòng đầu tiên (`reserved_slot_substituted`); nếu hết sạch chỗ thì từ chối (`DENY` - `RESERVED_SLOT_TAKEN`). Nếu là khách vãng lai hoặc `unrecognized`, tìm ô đầu tiên thỏa mãn `!sensorOccupied && !isReserved`. Nếu hết chỗ trả `DENY` (`FULL`).
+    - Khi xe ra (`OUT`): Luôn `OPEN` (gắn cờ `exit_manual_reconcile` nếu không rõ biển).
+    - Định dạng biển số hiển thị tối đa 12 ký tự cho LCD 1602 của ESP32 (`plate_for_lcd`).
+  - Hẹn giờ Fail-safe `5.0s` (`CAMERA_TIMEOUT_S = 5.0`): Khi `MqttBridge` nhận `gate/request`, khởi tạo timer 5.0s. Nếu ESP32-CAM bị treo hoặc quá 5s chưa gửi ảnh, tự động mở cổng ở chế độ `unrecognized` (`camera_timeout`) trước mốc fallback 8s của ESP32.
+  - Chống trùng lặp `seq` (Idempotency): Duy trì LRU 128 `seq` gần nhất, nếu nhận trùng thì trả về quyết định cũ với `is_duplicate = True` và không phát lại lệnh MQTT.
+- [x] Mở rộng `CloudBridgeBase`, `NullCloudBridge` và `FirestoreBridge`: Nhận đầy đủ schema chuẩn của Repo 2 cho `gateEvents` (`plateDisplay`, `confidence`, `assignedSlotId`, `matchedReservationId`, `denyReason`, `imageUrl`, `cropImageUrl`, `latencyMs`).
+- [x] Viết `edge-backend/app/cloud/storage_uploader.py`: ThreadPoolExecutor nền lưu ảnh chụp (`full.jpg`, `crop.jpg`) vào `data/captures/{yyyy-mm-dd}/` (mount static `/captures`) và upload Firebase Storage khi kích hoạt, sau đó đẩy sự kiện vào `CloudBridge`.
+- [x] Viết `edge-backend/app/api/recognize.py` (`POST /recognize`): Xác thực header `X-API-Key`, nhận `multipart/form-data` (1 hoặc 2 ảnh), chạy AI GPU RTX 5060, gọi `GateArbiter`, bắn ngay lệnh MQTT `gate/command`, đẩy background uploader và trả lời HTTP 200 JSON cho ESP32-CAM.
+- [x] Viết `edge-backend/scripts/simulate_cam.py`: Giả lập ESP32-CAM kết nối MQTT, subscribe `gate/request`, tự động bốc ảnh từ dataset gửi `POST /recognize` lên Edge Server.
+- [x] Bộ kiểm thử `pytest`: **71/71 tests PASSED** (thêm 10 test cases `test_gate_arbiter.py` S5-T1 → S5-T10 và 7 test cases `test_recognize_api.py`).
 
 ---
 

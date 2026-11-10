@@ -40,6 +40,14 @@ class CloudBridgeBase(ABC):
         flags: List[str],
         plate_raw: str = "",
         plate_norm: str = "",
+        plate_display: str = "",
+        confidence: float = 0.0,
+        assigned_slot_id: Optional[str] = None,
+        matched_reservation_id: Optional[str] = None,
+        deny_reason: Optional[str] = None,
+        image_url: Optional[str] = None,
+        crop_image_url: Optional[str] = None,
+        latency_ms: float = 0.0,
     ) -> None:
         """Đưa sự kiện cổng vào hàng đợi ghi collection gateEvents."""
         pass

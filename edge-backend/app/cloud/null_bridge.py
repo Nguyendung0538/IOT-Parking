@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.cloud.base import CloudBridgeBase
 
@@ -48,14 +48,28 @@ class NullCloudBridge(CloudBridgeBase):
         flags: List[str],
         plate_raw: str = "",
         plate_norm: str = "",
+        plate_display: str = "",
+        confidence: float = 0.0,
+        assigned_slot_id: Optional[str] = None,
+        matched_reservation_id: Optional[str] = None,
+        deny_reason: Optional[str] = None,
+        image_url: Optional[str] = None,
+        crop_image_url: Optional[str] = None,
+        latency_ms: float = 0.0,
     ) -> None:
         logger.info(
-            "[NullCloud] [Bỏ qua ghi Firestore] GateEvent: seq=%u, dir=%s, decision=%s, status=%s, flags=%s",
+            "[NullCloud] [Bỏ qua ghi Firestore] GateEvent: seq=%u, dir=%s, decision=%s, slot=%s, resId=%s, plate=%s, conf=%.2f, status=%s, flags=%s, img=%s, latency=%.1fms",
             seq,
             direction,
             decision,
+            assigned_slot_id,
+            matched_reservation_id,
+            plate_display or plate_norm or plate_raw,
+            confidence,
             status,
             flags,
+            image_url,
+            latency_ms,
         )
 
     def status(self) -> Dict[str, Any]:

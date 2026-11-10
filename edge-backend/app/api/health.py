@@ -35,6 +35,9 @@ def get_health(request: Request) -> Dict[str, Any]:
     ai_pipeline = getattr(request.app.state, "ai_pipeline", None)
     ai_status = ai_pipeline.status if ai_pipeline else {"gpuAvailable": False, "status": "disabled"}
 
+    arbiter = getattr(request.app.state, "arbiter", None)
+    arbiter_status = arbiter.status if arbiter else {"status": "uninitialized"}
+
     return {
         "status": overall_status,
         "mqtt": {
@@ -45,6 +48,7 @@ def get_health(request: Request) -> Dict[str, Any]:
         },
         "cloud": cloud_status,
         "ai": ai_status,
+        "arbiter": arbiter_status,
         "devices": {
             "gateOnline": snap.get("gateOnline", False),
             "camOnline": snap.get("camOnline", False),

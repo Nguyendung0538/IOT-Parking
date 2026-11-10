@@ -1,13 +1,15 @@
 """Pytest configuration and shared fixtures for Edge Backend tests."""
 
-import pytest
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
+import pytest
 
 from fastapi.testclient import TestClient
 
+from app.arbiter.gate_arbiter import GateArbiter
 from app.cloud.base import CloudBridgeBase
+from app.cloud.storage_uploader import StorageUploader
 from app.config import settings
 from app.main import app
 from app.models import ReservationItem
@@ -51,6 +53,14 @@ class DummyCloudBridge(CloudBridgeBase):
         flags: List[str],
         plate_raw: str = "",
         plate_norm: str = "",
+        plate_display: str = "",
+        confidence: float = 0.0,
+        assigned_slot_id: Optional[str] = None,
+        matched_reservation_id: Optional[str] = None,
+        deny_reason: Optional[str] = None,
+        image_url: Optional[str] = None,
+        crop_image_url: Optional[str] = None,
+        latency_ms: float = 0.0,
     ) -> None:
         self.fallback_events.append({
             "seq": seq,
@@ -60,6 +70,14 @@ class DummyCloudBridge(CloudBridgeBase):
             "flags": flags or [],
             "plate_raw": plate_raw,
             "plate_norm": plate_norm,
+            "plate_display": plate_display,
+            "confidence": confidence,
+            "assigned_slot_id": assigned_slot_id,
+            "matched_reservation_id": matched_reservation_id,
+            "deny_reason": deny_reason,
+            "image_url": image_url,
+            "crop_image_url": crop_image_url,
+            "latency_ms": latency_ms,
         })
 
     def status(self) -> Dict[str, Any]:
@@ -94,6 +112,28 @@ def mock_mqtt():
 
 
 @pytest.fixture
+def dummy_uploader(dummy_cloud, tmp_path):
+    # Dùng thư mục tạm tmp_path để tránh ghi đè data thật trong test
+    uploader = StorageUploader(cloud_bridge=dummy_cloud, max_workers=1)
+    uploader.local_base_dir = tmp_path / "captures"
+    uploader.local_base_dir.mkdir(parents=True, exist_ok=True)
+    yield uploader
+    uploader.stop()
+
+
+@pytest.fixture
+def arbiter(cache, mock_mqtt, dummy_cloud, dummy_uploader):
+    a = GateArbiter(
+        cache=cache,
+        mqtt_bridge=mock_mqtt,
+        cloud_bridge=dummy_cloud,
+        storage_uploader=dummy_uploader,
+    )
+    yield a
+    a.stop()
+
+
+@pytest.fixture
 def mock_ai_pipeline():
     m = MagicMock()
     m.status = {
@@ -119,12 +159,14 @@ def mock_ai_pipeline():
 
 
 @pytest.fixture
-def client(cache, dummy_cloud, mock_mqtt, mock_ai_pipeline):
+def client(cache, dummy_cloud, mock_mqtt, mock_ai_pipeline, arbiter, dummy_uploader):
     app.state.test_mode = True
     app.state.cache = cache
     app.state.cloud = dummy_cloud
     app.state.mqtt = mock_mqtt
     app.state.ai_pipeline = mock_ai_pipeline
+    app.state.arbiter = arbiter
+    app.state.storage_uploader = dummy_uploader
     with TestClient(app) as c:
         yield c
     app.state.test_mode = False

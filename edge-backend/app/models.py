@@ -78,3 +78,48 @@ class PendingRequestItem(BaseModel):
     direction: str
     receivedAt: datetime
 
+
+class RecognizeResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    ok: bool = True
+    seq: int
+    direction: str
+    action: str  # "OPEN" | "DENY"
+    status: str  # "ok" | "unrecognized" | "denied_full" | "denied_reserved_taken" | "duplicate_ignored"
+    assignedSlot: str = ""
+    plateRaw: str = ""
+    plateNormalized: str = ""
+    plateDisplay: str = ""
+    confidence: float = 0.0
+    latencyMs: float = 0.0
+    duplicate: bool = False
+    denyReason: Optional[str] = None
+    flags: List[str] = Field(default_factory=list)
+
+
+class GateEventRecord(BaseModel):
+    """Schema chuẩn của document gateEvents/{autoId} khớp với Repo 2"""
+    model_config = ConfigDict(extra="ignore")
+
+    deviceId: str = "ESP32_PARKING_01"
+    lotId: str = "lot_live_01"
+    seq: int
+    direction: str  # "IN" | "OUT"
+    plateRaw: str = ""
+    plateNormalized: str = ""
+    plateDisplay: str = ""
+    confidence: float = 0.0
+    decision: str  # "OPEN" | "DENY"
+    denyReason: Optional[str] = None
+    assignedSlotId: Optional[str] = None
+    matchedReservationId: Optional[str] = None
+    flags: List[str] = Field(default_factory=list)
+    status: str = "ok"
+    imageUrl: Optional[str] = None
+    cropImageUrl: Optional[str] = None
+    latencyMs: float = 0.0
+    source: str = "edge"
+    serverTs: Optional[Any] = None
+
+

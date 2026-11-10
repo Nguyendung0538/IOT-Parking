@@ -138,6 +138,29 @@ class StateCache:
                 removed = True
         return removed
 
+    def get_active_reservations(self) -> List[ReservationItem]:
+        """Lấy danh sách các reservation chưa hết hạn (expiresAt > now)."""
+        now = datetime.now(timezone.utc)
+        with self._lock:
+            return [
+                item for item in self._active_reservations.values()
+                if item.expiresAt > now
+            ]
+
+    def get_active_reservation_for_plate(self, plate_normalized: str) -> Optional[ReservationItem]:
+        """Tìm reservation còn hạn khớp với biển số xe (chuẩn hóa không ký tự đặc biệt)."""
+        if not plate_normalized:
+            return None
+        clean_target = "".join(c for c in plate_normalized.upper() if c.isalnum())
+        now = datetime.now(timezone.utc)
+        with self._lock:
+            for item in self._active_reservations.values():
+                if item.expiresAt > now:
+                    clean_res_plate = "".join(c for c in item.plate.upper() if c.isalnum())
+                    if clean_res_plate == clean_target:
+                        return item
+        return None
+
     def compute_reserved_mask(self) -> Dict[str, bool]:
         """Tính mặt nạ đặt chỗ 4 ô: ô X reserved <=> có active reservation chưa hết hạn."""
         now = datetime.now(timezone.utc)
@@ -206,6 +229,14 @@ class StateCache:
     def consume_pending_request(self, seq: int) -> Optional[PendingRequestItem]:
         with self._lock:
             return self._pending_requests.pop(seq, None)
+
+    def has_pending_request(self, seq: int) -> bool:
+        with self._lock:
+            return seq in self._pending_requests
+
+    def remove_pending_request(self, seq: int) -> bool:
+        with self._lock:
+            return self._pending_requests.pop(seq, None) is not None
 
     # ==========================================
     # SNAPSHOT TOÀN BỘ CACHE CHO API / HEALTH
