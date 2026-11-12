@@ -245,7 +245,7 @@ void ParkingNetworkClient::update(ParkingMonitor& parking, GateController& gate)
 #endif
 }
 
-bool ParkingNetworkClient::isConnected() const {
+bool ParkingNetworkClient::isConnected() {
 #if ENABLE_WIFI
     return (WiFi.status() == WL_CONNECTED && mqttClient.connected());
 #else

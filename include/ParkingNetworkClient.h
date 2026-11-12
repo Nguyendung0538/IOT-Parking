@@ -26,7 +26,7 @@ public:
     void update(ParkingMonitor& parking, GateController& gate);
 
     // Kiểm tra trạng thái kết nối MQTT
-    bool isConnected() const;
+    bool isConnected();
 
     // Gửi bản tin trạng thái toàn bãi (Retained = true)
     void publishState(const ParkingMonitor& parking, const GateController& gate);

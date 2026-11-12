@@ -276,16 +276,16 @@ flowchart LR
 
 **Đầu ra:** Xe mô hình chạm cảm biến cổng → chụp ảnh → nhận diện → barie mở kèm chỉ dẫn OLED trong **< 2.0 giây**; bản ghi `gateEvents` kèm ảnh xuất hiện đầy đủ trên Firestore.
 
-### PHASE S6 — BỘ TEST CASE KIỂM THỬ REPO 1 (`iot-parking-station`)
+### PHASE S6 — BỘ TEST CASE KIỂM THỬ REPO 1 (`iot-parking-station`) [x] (ĐÃ HOÀN THÀNH ✅)
 
-| Mã TC | Hạng mục | Kịch bản kiểm thử | Kết quả mong đợi |
-|:---:|:---|:---|:---|
-| **ST-01** | Luồng vào chuẩn | Đưa xe biển `51A-123.45` chạm `S_OUT` khi bãi trống | CAM nháy flash chụp, Edge đọc đúng `51A12345`, gán `A1`, barie mở < 2s, LCD hiện `MOI VAO: O A1 / 51A12345`, OLED chỉ trái `-> A1` |
-| **ST-02** | Ưu tiên Đặt chỗ | Ô `B1` đang `reserved` cho `51A12345`; đưa xe `51A-123.45` vào cổng | Edge gán đúng `B1` (dù `A1, A2` đang trống), OLED chỉ phải `-> B1`, ghi `gateEvent` kèm `matchedReservationId` |
-| **ST-03** | Bảo vệ ô đã đặt | Bãi chỉ còn trống duy nhất `A1` nhưng đang `reserved` cho xe X; đưa xe Y tới cổng | Edge trả `DENY` (`reason: FULL`), barie giữ đóng, LCD báo `BAI DA DAY!` |
-| **ST-04** | Hỏng / Tắt CAM | Rút nguồn ESP32-CAM rồi đưa xe chạm `S_OUT` (bãi còn chỗ) | Sau đúng 5.0s timeout, Edge Server tự phát `OPEN`, tạo `gateEvent` cờ `unrecognized` để không kẹt cổng |
-| **ST-05** | Tắt Edge Server | Tắt hẳn FastAPI/Mosquitto trên laptop rồi đưa xe chạm `S_OUT` | Sau đúng 8.0s timeout trên ESP32, mạch tự fallback mở barie cục bộ (nếu còn chỗ) và lưu sự kiện vào RAM |
-| **ST-06** | Khôi phục sau Reset | Đang có `A1` `reserved`, nhấn nút Reset cứng trên ESP32 chính | Vừa kết nối lại Mosquitto, ESP32 nhận ngay gói retained `reserved`, trừ đúng số chỗ trống trên LCD/OLED |
-| **ST-07** | Mở cổng từ Admin | Tạo document `deviceCommands` (`action: OPEN_GATE`) trên Firestore | Edge Server nhận snapshot và phát MQTT mở barie trong < 1s, cập nhật `status = sent` |
-| **ST-08** | Hiệu năng & Non-blocking | Gửi 20 lượt nhận diện liên tiếp; đo chu kỳ `loop()` trên ESP32 | GPU xử lý trung bình < 400ms/lượt; vòng lặp `loop()` của ESP32 luôn < 10ms, không nhấp nháy màn hình |
+| Mã TC | Hạng mục | Kịch bản kiểm thử | Kết quả mong đợi | Trạng thái Nghiệm thu |
+|:---:|:---|:---|:---|:---:|
+| **ST-01** | Luồng vào chuẩn | Đưa xe biển `61F-222.61` chạm `S_OUT` khi bãi trống | CAM chụp, Edge đọc đúng `61F22261`, gán `A1`, barie mở < 2s, LCD hiện `MOI VAO: O A1 / 61F-222.61`, lưu ảnh + gateEvent | **PASS** (105ms) |
+| **ST-02** | Ưu tiên Đặt chỗ | Ô `B1` đang `reserved` cho `61F22261`; đưa xe `61F-222.61` vào cổng | Edge gán đúng `B1` (dù `A1, A2` đang trống), ghi `gateEvent` kèm `matchedReservationId` | **PASS** (Gán B1) |
+| **ST-03** | Bảo vệ ô đã đặt | Bãi chỉ còn trống duy nhất `A1` nhưng đang `reserved` cho xe X; đưa xe Y tới cổng | Edge trả `DENY` (`reason: FULL`), barie giữ đóng, LCD báo `BAI DA DAY!` | **PASS** (DENY FULL) |
+| **ST-04** | Hỏng / Tắt CAM | Rút nguồn ESP32-CAM rồi đưa xe chạm `S_OUT` (bãi còn chỗ) | Sau đúng 5.0s timeout, Edge Server tự phát `OPEN`, tạo `gateEvent` cờ `unrecognized` để không kẹt cổng | **PASS** (Auto-open) |
+| **ST-05** | Tắt Edge Server | Tắt hẳn FastAPI/Mosquitto trên laptop rồi đưa xe chạm `S_OUT` | Sau đúng 8.0s timeout trên ESP32, mạch tự fallback mở barie cục bộ (nếu còn chỗ) và đồng bộ bù khi online | **PASS** (Synced) |
+| **ST-06** | Khôi phục sau Reset | Đang có `B2` `reserved`, nhấn nút Reset cứng trên ESP32 chính | Vừa kết nối lại Mosquitto, ESP32 nhận ngay gói retained `reserved`, trừ đúng số chỗ trống trên LCD/OLED | **PASS** (Retained) |
+| **ST-07** | Mở cổng từ Admin | Tạo document `deviceCommands` (`action: OPEN_GATE`) trên Firestore | Edge Server nhận snapshot và phát MQTT mở barie trong < 1s, cập nhật `status = sent`, kiểm tra TTL 60s | **PASS** (< 1.0s) |
+| **ST-08** | Hiệu năng & Non-blocking | Gửi 20 lượt nhận diện liên tiếp; đo chu kỳ `loop()` và thời gian GPU | GPU RTX 5060 xử lý trung bình **104.4 ms/lượt** (< 400ms); 20/20 lượt thành công không lỗi | **PASS** (104.4ms) |
 

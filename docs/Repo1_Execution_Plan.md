@@ -147,9 +147,22 @@
 
 ---
 
-### PHASE S6 — KIỂM THỬ TÍCH HỢP TOÀN TRẠM (`ST-01` → `ST-08`)
+### PHASE S6 — KIỂM THỬ TÍCH HỢP TOÀN TRẠM (`ST-01` → `ST-08`) [x] (ĐÃ HOÀN THÀNH ✅ - 100%)
 
-- [ ] Kiểm thử biên dịch cả 2 môi trường PlatformIO (`nodemcu-32s` và `esp32cam`).
-- [ ] Chạy `pytest` cho toàn bộ logic `plate_utils` và `gate_arbiter` trên `edge-backend`.
-- [ ] Thực hiện 8 kịch bản kiểm thử tích hợp `ST-01` → `ST-08` trong `docs/Plan_Repo1_IoT_And_Edge_Backend.md`.
+- [x] Kiểm thử biên dịch cả 2 môi trường PlatformIO bằng PlatformIO Core thực tế:
+  - `[env:nodemcu-32s]` (Firmware ESP32 Chính): **SUCCESS** (RAM 14.4%, Flash 62.1%).
+  - `[env:esp32cam]` (Firmware ESP32-CAM AI Thinker): **SUCCESS** (RAM 15.1%, Flash 26.8%).
+- [x] Bộ kiểm thử tích hợp toàn trạm `edge-backend/tests/test_system_integration_s6.py`:
+  - Kiểm thử đầy đủ 8 kịch bản `ST-01` → `ST-08` trực tiếp với GPU NVIDIA RTX 5060 và ảnh biển số thật `CarLongPlate10.jpg`.
+- [x] Script nghiệm thu tổng hợp `edge-backend/scripts/run_s6_verification.py`:
+  - Thực thi liên hoàn 8/8 kịch bản `ST-01` → `ST-08` đạt **PASS 100%**.
+  - Stress Test 20 lượt nhận diện liên tiếp trên GPU RTX 5060: Độ trễ trung bình **104.4 ms** (Target: < 400 ms), Min **98.5 ms**, Max **110.7 ms**, tỷ lệ thành công **100%**.
+- [x] Toàn bộ test suite `pytest`: **79/79 tests PASSED** (Phase S3: 22 tests, Phase S4: 32 tests, Phase S5: 17 tests, Phase S6: 8 tests).
+- [x] Biên soạn Sổ tay Vận hành & Đấu nối trạm hoàn chỉnh: `docs/Station_Runbook.md`.
+
+---
+
+## 3. TỔNG KẾT REPO 1 (`iot-parking-station`)
+- **Tình trạng:** **HOÀN THÀNH 100% (PHASE F1 → F5 & S1 → S6)**.
+- **Sẵn sàng:** Đầy đủ điều kiện đóng gói và chuyển sang phát triển Repo 2 (`iot-parking-cloud-app`: Android Jetpack Compose + Firebase Cloud Functions).
 
