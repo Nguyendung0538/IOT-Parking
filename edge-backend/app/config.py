@@ -58,6 +58,9 @@ class Settings(BaseSettings):
 
     # 5. Firebase / Cloud Bridge
     FIREBASE_ENABLED: bool = False
+    FIREBASE_PROJECT_ID: str = "demo-iot-parking-smart"
+    FIRESTORE_EMULATOR_HOST: str = ""
+    FIREBASE_STORAGE_EMULATOR_HOST: str = ""
     GOOGLE_APPLICATION_CREDENTIALS: str = "serviceAccountKey.json"
     FIREBASE_STORAGE_BUCKET: str = ""
 

@@ -31,7 +31,7 @@ class FirestoreBridge(CloudBridgeBase):
     - deviceCommands (OPEN_GATE) -> Publish lệnh mở cổng tức thì qua MQTT
     """
 
-    def __init__(self, cache: StateCache, mqtt_bridge: Any = None):
+    def __init__(self, cache: StateCache, mqtt_bridge: Any = None, settings: Any = None):
         self.cache = cache
         self.mqtt = mqtt_bridge
 
@@ -57,18 +57,42 @@ class FirestoreBridge(CloudBridgeBase):
             if os.path.exists(candidate):
                 cred_path = candidate
 
+        emulator_host = settings.FIRESTORE_EMULATOR_HOST or os.environ.get("FIRESTORE_EMULATOR_HOST", "")
+        if emulator_host:
+            os.environ["FIRESTORE_EMULATOR_HOST"] = emulator_host
+            os.environ["GCLOUD_PROJECT"] = settings.FIREBASE_PROJECT_ID
+        if settings.FIREBASE_STORAGE_EMULATOR_HOST:
+            os.environ["STORAGE_EMULATOR_HOST"] = f"http://{settings.FIREBASE_STORAGE_EMULATOR_HOST}"
+
         try:
-            if not firebase_admin._apps:
-                if os.path.exists(cred_path):
-                    cred = credentials.Certificate(cred_path)
-                    firebase_admin.initialize_app(cred, {
-                        "storageBucket": settings.FIREBASE_STORAGE_BUCKET or None
-                    })
-                    logger.info("Firebase Admin khởi tạo thành công từ certificate: %s", cred_path)
-                else:
-                    firebase_admin.initialize_app()
-                    logger.info("Firebase Admin khởi tạo từ Application Default Credentials.")
-            self.db = firestore.client()
+            if emulator_host and not os.path.exists(cred_path):
+                from google.auth.credentials import AnonymousCredentials
+                from google.cloud import firestore as gc_firestore
+
+                self.db = gc_firestore.Client(
+                    project=settings.FIREBASE_PROJECT_ID,
+                    credentials=AnonymousCredentials(),
+                )
+                logger.info(
+                    "Kết nối Firestore Emulator tại %s (project=%s)",
+                    emulator_host,
+                    settings.FIREBASE_PROJECT_ID,
+                )
+            else:
+                if not firebase_admin._apps:
+                    if os.path.exists(cred_path):
+                        cred = credentials.Certificate(cred_path)
+                        firebase_admin.initialize_app(cred, {
+                            "projectId": settings.FIREBASE_PROJECT_ID,
+                            "storageBucket": settings.FIREBASE_STORAGE_BUCKET or None,
+                        })
+                        logger.info("Firebase Admin khởi tạo thành công từ certificate: %s", cred_path)
+                    else:
+                        firebase_admin.initialize_app(options={
+                            "projectId": settings.FIREBASE_PROJECT_ID,
+                        })
+                        logger.info("Firebase Admin khởi tạo từ Application Default Credentials.")
+                self.db = firestore.client()
             self._connected = True
         except Exception as e:
             logger.error("Lỗi khi kết nối Firebase Firestore: %s", e)

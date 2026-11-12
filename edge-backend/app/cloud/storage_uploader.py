@@ -73,20 +73,22 @@ class StorageUploader:
             day_dir = self.local_base_dir / date_str
             day_dir.mkdir(parents=True, exist_ok=True)
 
+            base_http_url = f"http://127.0.0.1:{settings.API_PORT}"
             if full_jpeg_bytes:
                 full_path = day_dir / f"{prefix}_full.jpg"
                 with open(full_path, "wb") as f:
                     f.write(full_jpeg_bytes)
-                image_url = f"/captures/{date_str}/{prefix}_full.jpg"
+                image_url = f"{base_http_url}/captures/{date_str}/{prefix}_full.jpg"
 
             if crop_jpeg_bytes:
                 crop_path = day_dir / f"{prefix}_crop.jpg"
                 with open(crop_path, "wb") as f:
                     f.write(crop_jpeg_bytes)
-                crop_image_url = f"/captures/{date_str}/{prefix}_crop.jpg"
+                crop_image_url = f"{base_http_url}/captures/{date_str}/{prefix}_crop.jpg"
 
-            # 2. Upload lên Firebase Cloud Storage (nếu được kích hoạt)
-            if settings.FIREBASE_ENABLED and settings.FIREBASE_STORAGE_BUCKET:
+            # 2. Upload lên Firebase Cloud Storage (nếu được kích hoạt và có Firebase App)
+            import firebase_admin
+            if settings.FIREBASE_ENABLED and settings.FIREBASE_STORAGE_BUCKET and firebase_admin._apps:
                 try:
                     from firebase_admin import storage
                     bucket = storage.bucket(settings.FIREBASE_STORAGE_BUCKET)
