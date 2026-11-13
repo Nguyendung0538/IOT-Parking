@@ -6,7 +6,6 @@
 node_modules
 yolo_plate_dataset/
 
-
 # Python & Edge Backend
 __pycache__/
 *.py[cod]

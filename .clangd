@@ -1,0 +1,7 @@
+CompileFlags:
+  Add:
+    - -isystem
+    - C:/Users/Meldyy/.platformio/packages/toolchain-xtensa-esp32/xtensa-esp32-elf/include
+    - -isystem
+    - C:/Users/Meldyy/.platformio/packages/toolchain-xtensa-esp32/xtensa-esp32-elf/sys-include
+

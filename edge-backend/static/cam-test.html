@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ESP32-CAM &amp; YOLO Plate Test</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --border: #334155;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --success: #22c55e;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+    header {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    h1 { font-size: 1.25rem; font-weight: 700; display: flex; align-items: center; gap: 10px; }
+    .status-group { display: flex; flex-wrap: wrap; gap: 8px; }
+    .badge {
+      font-size: 0.8rem;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .dot.ok { background: var(--success); box-shadow: 0 0 8px var(--success); }
+    .dot.err { background: var(--danger); }
+
+    .controls {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .cam-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+    .btn {
+      border: none;
+      border-radius: 8px;
+      padding: 11px 18px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      transition: background 0.15s, opacity 0.15s;
+    }
+    .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+    .btn-secondary { background: #334155; color: var(--text); }
+    .btn-secondary:hover:not(:disabled) { background: #475569; }
+
+    label.toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.9rem;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }
+    label.toggle input { width: 16px; height: 16px; accent-color: var(--warning); }
+
+    .upload-zone {
+      border: 1.5px dashed var(--border);
+      border-radius: 8px;
+      padding: 8px 14px;
+      font-size: 0.88rem;
+      color: var(--muted);
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .upload-zone:hover, .upload-zone.dragover {
+      border-color: var(--primary);
+      color: var(--text);
+    }
+
+    .alert {
+      display: none;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      border: 1px solid transparent;
+    }
+    .alert.show { display: block; }
+    .alert.error { background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.4); color: #fca5a5; }
+    .alert.info { background: rgba(59, 130, 246, 0.12); border-color: rgba(59, 130, 246, 0.4); color: #93c5fd; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.45fr 1fr;
+      gap: 18px;
+    }
+    @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .card-title { font-size: 0.9rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+
+    .image-box {
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      min-height: 340px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+    }
+    .image-box img { max-width: 100%; max-height: 480px; object-fit: contain; display: block; }
+    .placeholder { color: var(--muted); font-size: 0.9rem; text-align: center; padding: 20px; }
+
+    .plate-banner {
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      text-align: center;
+    }
+    .plate-text {
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: 2px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--success);
+    }
+    .plate-text.none { font-size: 1.2rem; color: var(--danger); letter-spacing: 0; }
+
+    .crop-box {
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      min-height: 110px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px;
+    }
+    .crop-box img { max-width: 100%; max-height: 140px; object-fit: contain; border-radius: 4px; }
+
+    .meta-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    .meta-table td { padding: 7px 4px; border-bottom: 1px solid var(--border); }
+    .meta-table td:first-child { color: var(--muted); }
+    .meta-table td:last-child { text-align: right; font-weight: 600; font-family: ui-monospace, monospace; }
+
+    .history-strip {
+      display: flex;
+      gap: 10px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+    .hist-item {
+      flex: 0 0 auto;
+      width: 120px;
+      background: #0b1120;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .hist-item:hover { border-color: var(--primary); }
+    .hist-item img { width: 100%; height: 68px; object-fit: cover; border-radius: 4px; }
+    .hist-item .hist-plate {
+      margin-top: 4px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📷 ESP32-CAM &amp; YOLO Plate Test</h1>
+      <div class="status-group">
+        <span class="badge"><span id="dotCam" class="dot"></span> ESP32-CAM: <strong id="txtCam">Đang kiểm tra...</strong></span>
+        <span class="badge"><span id="dotMqtt" class="dot"></span> MQTT: <strong id="txtMqtt">...</strong></span>
+        <span class="badge"><span id="dotAi" class="dot"></span> YOLO AI: <strong id="txtAi">...</strong></span>
+      </div>
+    </header>
+
+    <div class="controls">
+      <div class="cam-actions">
+        <button id="btnCaptureCam" class="btn btn-primary">📸 Chụp từ ESP32-CAM</button>
+        <label class="toggle">
+          <input type="checkbox" id="chkFlash" />
+          <span>Bật đèn Flash LED</span>
+        </label>
+      </div>
+
+      <div id="dropZone" class="upload-zone">
+        📁 Hoặc kéo thả / chọn ảnh từ máy để test YOLO
+        <input type="file" id="fileInput" accept="image/*" hidden />
+      </div>
+    </div>
+
+    <div id="alertBox" class="alert"></div>
+
+    <div class="grid">
+      <div class="card">
+        <div class="card-title">Ảnh gốc &amp; Khung nhận diện YOLO</div>
+        <div class="image-box" id="annotatedBox">
+          <div class="placeholder">Chưa có ảnh. Nhấn "Chụp từ ESP32-CAM" hoặc tải ảnh lên để test.</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Kết quả nhận diện biển số</div>
+        <div class="plate-banner">
+          <div id="plateDisplay" class="plate-text none">CHƯA CÓ DỮ LIỆU</div>
+        </div>
+
+        <div class="card-title" style="margin-top: 4px;">Ảnh Crop vùng biển số</div>
+        <div class="crop-box" id="cropBox">
+          <div class="placeholder">Không có vùng biển số được cắt</div>
+        </div>
+
+        <table class="meta-table">
+          <tr><td>YOLO phát hiện biển</td><td id="metaYolo">-</td></tr>
+          <tr><td>Detector sử dụng</td><td id="metaDetector">-</td></tr>
+          <tr><td>Độ tin cậy (Confidence)</td><td id="metaConf">-</td></tr>
+          <tr><td>Biển số thô (OCR Raw)</td><td id="metaRaw">-</td></tr>
+          <tr><td>Biển chuẩn hóa</td><td id="metaNorm">-</td></tr>
+          <tr><td>Hợp lệ (Regex VN)</td><td id="metaValid">-</td></tr>
+          <tr><td>Thời gian xử lý</td><td id="metaLatency">-</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Lịch sử test gần đây (Click để xem lại)</div>
+      <div id="historyStrip" class="history-strip">
+        <div class="placeholder" style="padding: 8px;">Chưa có lịch sử.</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const btnCaptureCam = document.getElementById("btnCaptureCam");
+    const chkFlash = document.getElementById("chkFlash");
+    const dropZone = document.getElementById("dropZone");
+    const fileInput = document.getElementById("fileInput");
+    const alertBox = document.getElementById("alertBox");
+
+    const historyList = [];
+
+    function showAlert(msg, type = "info") {
+      alertBox.textContent = msg;
+      alertBox.className = `alert show ${type}`;
+    }
+
+    function hideAlert() {
+      alertBox.className = "alert";
+    }
+
+    async function refreshStatus() {
+      try {
+        const res = await fetch("/debug/cam-status");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+
+        document.getElementById("dotCam").className = "dot " + (data.camOnline ? "ok" : "err");
+        document.getElementById("txtCam").textContent = data.camOnline ? "Online" : "Offline";
+
+        document.getElementById("dotMqtt").className = "dot " + (data.mqttConnected ? "ok" : "err");
+        document.getElementById("txtMqtt").textContent = data.mqttConnected ? "Connected" : "Disconnected";
+
+        document.getElementById("dotAi").className = "dot " + (data.aiReady ? "ok" : "err");
+        document.getElementById("txtAi").textContent = data.aiReady ? "Ready" : "Not Ready";
+      } catch (e) {
+        document.getElementById("dotCam").className = "dot err";
+        document.getElementById("txtCam").textContent = "Server Off";
+      }
+    }
+
+    function renderResult(data, saveHistory = true) {
+      const annotatedBox = document.getElementById("annotatedBox");
+      if (data.annotatedImageBase64) {
+        annotatedBox.innerHTML = `<img src="data:image/jpeg;base64,${data.annotatedImageBase64}" alt="Captured" />`;
+      } else {
+        annotatedBox.innerHTML = `<div class="placeholder">Không có ảnh hiển thị</div>`;
+      }
+
+      const cropBox = document.getElementById("cropBox");
+      if (data.cropImageBase64) {
+        cropBox.innerHTML = `<img src="data:image/jpeg;base64,${data.cropImageBase64}" alt="Crop" />`;
+      } else {
+        cropBox.innerHTML = `<div class="placeholder">Không cắt được vùng biển số</div>`;
+      }
+
+      const plateEl = document.getElementById("plateDisplay");
+      if (data.plateDisplay) {
+        plateEl.textContent = data.plateDisplay;
+        plateEl.className = "plate-text";
+      } else if (data.yoloDetected) {
+        plateEl.textContent = "YOLO THẤY BIỂN (OCR CHƯA ĐỌC ĐƯỢC)";
+        plateEl.className = "plate-text none";
+      } else {
+        plateEl.textContent = "KHÔNG PHÁT HIỆN BIỂN SỐ";
+        plateEl.className = "plate-text none";
+      }
+
+      document.getElementById("metaYolo").textContent = data.yoloDetected
+        ? `CÓ (${data.yoloBoxes.length} box)`
+        : "KHÔNG";
+      document.getElementById("metaDetector").textContent = data.detectorUsed || "-";
+      document.getElementById("metaConf").textContent =
+        data.confidence != null ? `${(data.confidence * 100).toFixed(1)}%` : "-";
+      document.getElementById("metaRaw").textContent = data.plateRaw || "-";
+      document.getElementById("metaNorm").textContent = data.plateNormalized || "-";
+      document.getElementById("metaValid").textContent = data.isValid ? "Hợp lệ" : "Không hợp lệ";
+      document.getElementById("metaLatency").textContent =
+        data.latencyMs != null ? `${data.latencyMs} ms` : "-";
+
+      if (saveHistory && data.annotatedImageBase64) {
+        historyList.unshift(data);
+        if (historyList.length > 8) historyList.pop();
+        renderHistory();
+      }
+    }
+
+    function renderHistory() {
+      const strip = document.getElementById("historyStrip");
+      if (historyList.length === 0) {
+        strip.innerHTML = `<div class="placeholder" style="padding: 8px;">Chưa có lịch sử.</div>`;
+        return;
+      }
+      strip.innerHTML = "";
+      historyList.forEach((item) => {
+        const div = document.createElement("div");
+        div.className = "hist-item";
+        div.innerHTML = `
+          <img src="data:image/jpeg;base64,${item.annotatedImageBase64}" />
+          <div class="hist-plate">${item.plateDisplay || (item.yoloDetected ? "YOLO Box" : "No Plate")}</div>
+        `;
+        div.onclick = () => renderResult(item, false);
+        strip.appendChild(div);
+      });
+    }
+
+    btnCaptureCam.addEventListener("click", async () => {
+      hideAlert();
+      btnCaptureCam.disabled = true;
+      btnCaptureCam.textContent = "⏳ Đang gửi lệnh & chờ ảnh từ ESP32-CAM...";
+      try {
+        const res = await fetch("/debug/cam-test-capture", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ useFlash: chkFlash.checked, timeoutSeconds: 8.0 }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showAlert(data.detail || "Lỗi chụp ảnh từ ESP32-CAM", "error");
+        } else {
+          renderResult(data, true);
+        }
+      } catch (err) {
+        showAlert("Lỗi kết nối tới Edge Server: " + err.message, "error");
+      } finally {
+        btnCaptureCam.disabled = false;
+        btnCaptureCam.textContent = "📸 Chụp từ ESP32-CAM";
+      }
+    });
+
+    async function uploadFileToYolo(file) {
+      if (!file) return;
+      hideAlert();
+      showAlert(`Đang kiểm tra ảnh "${file.name}" qua mô hình YOLO...`, "info");
+      const formData = new FormData();
+      formData.append("images", file);
+      try {
+        const res = await fetch("/debug/recognize-test", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showAlert(data.detail || "Lỗi nhận diện ảnh", "error");
+        } else {
+          hideAlert();
+          renderResult(data, true);
+        }
+      } catch (err) {
+        showAlert("Lỗi upload ảnh: " + err.message, "error");
+      }
+    }
+
+    dropZone.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", (e) => uploadFileToYolo(e.target.files[0]));
+    dropZone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropZone.classList.add("dragover");
+    });
+    dropZone.addEventListener("dragleave", () => dropZone.classList.remove("dragover"));
+    dropZone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropZone.classList.remove("dragover");
+      if (e.dataTransfer.files.length > 0) {
+        uploadFileToYolo(e.dataTransfer.files[0]);
+      }
+    });
+
+    refreshStatus();
+    setInterval(refreshStatus, 4000);
+  </script>
+</body>
+</html>
+

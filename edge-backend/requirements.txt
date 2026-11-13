@@ -1,0 +1,18 @@
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+paho-mqtt>=2.1.0
+firebase-admin>=6.5.0
+python-multipart>=0.0.9
+
+# AI & Computer Vision (Phase S4 - GPU RTX 5060)
+# Cài đặt PyTorch CUDA: pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+torch>=2.4.0
+torchvision>=0.19.0
+numpy>=1.26.0
+opencv-python-headless>=4.10.0
+ultralytics>=8.3.0
+easyocr>=1.7.0
+
+

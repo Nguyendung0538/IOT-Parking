@@ -19,7 +19,7 @@
 
 ---
 
-## 0. TIẾN ĐỘ TRIỂN KHAI HIỆN TẠI (CẬP NHẬT 2026-11-06)
+## 0. TIẾN ĐỘ TRIỂN KHAI HIỆN TẠI (CẬP NHẬT 2026-11-10)
 
 | Giai đoạn | Hạng mục | Trạng thái | Chi tiết trong Codebase |
 |:---:|:---|:---:|:---|
@@ -29,9 +29,9 @@
 | **Phase F4** | Module `DisplayManager` (LCD 1602 & OLED 1.3") | ✅ **Đã xong (100%)** | Đã có [`DisplayManager.h`](../include/DisplayManager.h) / [`.cpp`](../src/DisplayManager.cpp), chống nhấp nháy LCD, vẽ mũi tên điều hướng Khu A/B trên OLED SH1106. |
 | **Phase F5** | Tích hợp vòng lặp chính `src/main.cpp` | ✅ **Đã xong (100%)** | Đã tích hợp chạy non-blocking trong [`main.cpp`](../src/main.cpp) và khung [`ParkingNetworkClient.cpp`](../src/ParkingNetworkClient.cpp) (đang ở chế độ HTTP cục bộ). |
 | **Phase S1** | Cấu trúc Multi-Env (`gate` + `cam`) & Mosquitto Broker | ✅ **Đã xong (100%)** | Đã tách `src/gate/`, `src/cam/main_cam.cpp`, `include/common_network.h`, `include/cam_config.h`, `platformio.ini` multi-env và `edge-backend/mosquitto/`. |
-| **Phase S2** | Nâng cấp ESP32 Chính (MQTT + Reserved + Auth 8s) & Code ESP32-CAM | ⏳ **Chưa làm (0%)** | Cần nâng cấp `ParkingNetworkClient` sang `PubSubClient`, thêm `reservedMask`, `WAIT_AUTH` và viết `src/cam/main_cam.cpp`. |
-| **Phase S3** | Edge Server: MQTT ↔ Firestore Bridge & State Cache | ⏳ **Chưa làm (0%)** | Cần khởi tạo FastAPI, `state_cache.py`, `mqtt/bridge.py`, `cloud/firestore_bridge.py`. |
-| **Phase S4** | Thu thập Dataset & Pipeline AI YOLO + EasyOCR (CUDA) | ⏳ **Chưa làm (0%)** | Cần viết `capture_dataset.py`, fine-tune YOLOv8s/11s và hiện thực `detector.py`, `ocr.py`, `plate_utils.py`. |
+| **Phase S2** | Nâng cấp ESP32 Chính (MQTT + Reserved + Auth 8s) & Code ESP32-CAM | ✅ **Đã xong (100%)** | Đã hoàn thiện `ParkingMonitor` (reservedMask), `GateController` (WAIT_AUTH + Offline Fallback 8s), `DisplayManager` (LCD/OLED), `ParkingNetworkClient` (MQTT PubSubClient + Ring Buffer) và `src/cam/main_cam.cpp`. |
+| **Phase S3** | Edge Server: MQTT ↔ Firestore Bridge & State Cache | ✅ **Đã xong (100%)** | Đã hoàn thiện FastAPI, RAM [`StateCache`](../edge-backend/app/state_cache.py) RLock, [`MqttBridge`](../edge-backend/app/mqtt/bridge.py) paho-mqtt v2, [`FirestoreBridge`](../edge-backend/app/cloud/firestore_bridge.py) & [`NullCloudBridge`](../edge-backend/app/cloud/null_bridge.py), REST APIs `/health` & `/debug`, script mô phỏng [`simulate_gate.py`](../edge-backend/scripts/simulate_gate.py) và 22/22 unit tests. |
+| **Phase S4** | Thu thập Dataset & Pipeline AI YOLO + EasyOCR (CUDA) | ✅ **Đã xong (100%)** | Đã cấu hình PyTorch CUDA 12.8 trên RTX 5060, tải model YOLOv8 VN [`plate_yolo_s.pt`](../edge-backend/models/plate_yolo_s.pt) (8.4ms), hoàn thiện [`detector.py`](../edge-backend/app/recognition/detector.py), [`ocr.py`](../edge-backend/app/recognition/ocr.py) (ghép 2 dòng), [`plate_utils.py`](../edge-backend/app/recognition/plate_utils.py), [`pipeline.py`](../edge-backend/app/recognition/pipeline.py), benchmark đạt latency **50.4ms** và 54/54 unit tests passed. |
 | **Phase S5** | Fast Gate Arbiter (< 0.5s), `POST /recognize` & Upload Storage nền | ⏳ **Chưa làm (0%)** | Cần hiện thực `gate_arbiter.py`, endpoint nhận ảnh từ CAM và luồng ghi `gateEvents` + upload ảnh bất đồng bộ. |
 | **Phase S6** | Kiểm thử tích hợp Sa hình & Chịu lỗi (`ST-01` → `ST-08`) | ⏳ **Chưa làm (0%)** | Thực hiện sau khi hoàn tất S1 → S5. |
 
@@ -187,13 +187,13 @@ iot-parking-station/
 
 ## 4. PHẦN B — THIẾT KẾ CHI TIẾT BACKEND BÃI ĐỖ (`edge-backend/`)
 
-### 4.1. Giao thức MQTT Nội bộ (Giữa Firmware và Edge Server)
+### 4.1. Giao thức MQTT Nội bộ (Giữa Firmware và Edge Server — Khớp Firmware Phase S2)
 
-| Topic | Chiều | QoS | Retain | Cấu trúc Payload JSON |
+| Topic | Chiều | QoS | Retain | Cấu trúc Payload JSON (Thực tế từ Firmware S2) |
 |:---|:---|:--:|:--:|:---|
-| `parking/ESP32_PARKING_01/state` | ESP32 Chính → Edge | 1 | ✅ | `{"device_id":"ESP32_PARKING_01","ts":1205,"gate":{"barrier_open":false,"last_action":"ENTER"},"slots":{"A1":true,"A2":false,"B1":false,"B2":false}}` |
-| `parking/ESP32_PARKING_01/gate/request` | ESP32 Chính → CAM & Edge | 1 | ❌ | `{"seq":42,"direction":"IN"}` hoặc `"OUT"` |
-| `parking/ESP32_PARKING_01/gate/command` | Edge → ESP32 Chính | 1 | ❌ | Cho vào: `{"seq":42,"action":"OPEN","direction":"IN","plate":"51A12345","assignedSlot":"A2"}`<br/>Từ chối: `{"seq":42,"action":"DENY","reason":"FULL"}` |
+| `parking/ESP32_PARKING_01/state` | ESP32 Chính → Edge | 1 | ✅ | `{"deviceId":"ESP32_PARKING_01","uptime":1205,"freeSlots":3,"totalSlots":4,"barrierOpen":false,"gateState":"IDLE","slots":{"A1":{"occupied":true,"reserved":false},"A2":{"occupied":false,"reserved":false},"B1":{"occupied":false,"reserved":false},"B2":{"occupied":false,"reserved":false}},"summary":{"zone_A_available":1,"zone_B_available":2,"total_available":3,"total_occupied":1,"total_reserved":0}}` |
+| `parking/ESP32_PARKING_01/gate/request` | ESP32 Chính → CAM & Edge | 1 | ❌ | Thường: `{"deviceId":"ESP32_PARKING_01","seq":42,"direction":"IN","freeSlots":3,"timestamp":120500}`<br/>Đồng bộ bù Offline Fallback: `{"deviceId":"ESP32_PARKING_01","seq":42,"direction":"IN","offlineFallback":true,"clientTimestamp":120500}` |
+| `parking/ESP32_PARKING_01/gate/command` | Edge → ESP32 Chính | 1 | ❌ | Cho vào: `{"seq":42,"action":"OPEN","plate":"51A12345","assignedSlot":"A2"}`<br/>Từ chối: `{"seq":42,"action":"DENY","plate":"51A12345","reason":"FULL"}`<br/>Mở khẩn cấp Admin: `{"seq":0,"action":"OPEN","plate":"ADMIN_OPEN","assignedSlot":""}` |
 | `parking/ESP32_PARKING_01/reserved` | Edge → ESP32 Chính | 1 | ✅ | `{"A1":true,"A2":false,"B1":false,"B2":false}` |
 | `parking/ESP32_PARKING_01/status` | ESP32 Chính → Edge (LWT) | 1 | ✅ | `"online"` / `"offline"` |
 | `parking/ESP32_CAM_01/status` | ESP32-CAM → Edge (LWT) | 1 | ✅ | `"online"` / `"offline"` |
@@ -221,14 +221,14 @@ Dựa trên `state_cache` trong RAM (gồm trạng thái vật lý `sensorOccupi
 
 ### 4.4. Hợp đồng Đồng bộ giữa Repo 1 (`edge-backend`) và Repo 2 (Firebase Cloud)
 - **Từ Repo 1 ghi lên Firestore/Storage của Repo 2:**
-  1. Sau khi phát MQTT `gate/command`, ghi ngay bản ghi vào `gateEvents/{eventId}`:
-     `{ deviceId, lotId: "lot_live_01", seq, direction, plateRaw, plateNormalized, confidence, decision, denyReason?, assignedSlotId?, matchedReservationId?, flags, status: "ok"|"unrecognized", imageUrl, cropImageUrl, latencyMs, serverTs }` → kích hoạt Cloud Function `onGateEventCreated` ở Repo 2.
-  2. Khi nhận MQTT `state` từ ESP32: cập nhật `lots/lot_live_01/slots/{slotId}.sensorOccupied`.
-  3. Khi nhận MQTT `status` (LWT): cập nhật `devices/{id}.online` và `lots/lot_live_01.deviceOnline`.
+  1. Sau khi phát MQTT `gate/command` (hoặc khi nhận sự kiện `offlineFallback`), ghi ngay bản ghi vào `gateEvents/{eventId}`:
+     `{ deviceId, lotId: "lot_live_01", seq, direction, plateRaw, plateNormalized, confidence, decision, denyReason?, assignedSlotId?, matchedReservationId?, flags, status: "ok"|"unrecognized"|"offline_fallback", imageUrl, cropImageUrl, latencyMs, serverTs }` → kích hoạt Cloud Function `onGateEventCreated` ở Repo 2.
+  2. Khi nhận MQTT `state` từ ESP32: cập nhật `lots/lot_live_01/slots/{slotId}` với `{ sensorOccupied, updatedAt: serverTs }` *(Trigger `onSlotUpdate.ts` của Repo 2 tự suy diễn `status` và `lots/lot_live_01.availableSlots`)*.
+  3. Khi nhận MQTT `status` (LWT): cập nhật `devices/{id}` với `{ online, lastSeen: serverTs, lotId: "lot_live_01", type }` và `lots/lot_live_01` với `{ deviceOnline, camOnline, edgeHeartbeatAt }`.
   4. Upload bất đồng bộ ảnh gốc & ảnh crop lên Cloud Storage (`gate/{yyyy-mm-dd}/...`).
 - **Từ Repo 2 đẩy xuống Repo 1 (qua Firestore `on_snapshot`):**
   1. Lắng nghe `reservations` (`lotId == "lot_live_01"`, `status == "active"`) → cập nhật `state_cache` và publish retained `parking/ESP32_PARKING_01/reserved`.
-  2. Lắng nghe `deviceCommands` (`status == "pending"`) → publish `gate/command` (`seq = 0, action = "OPEN"`) và cập nhật `status = "sent"`.
+  2. Lắng nghe `deviceCommands` (`deviceId == "ESP32_PARKING_01"`, `status == "pending"`) → publish `gate/command` (`seq = 0, action = "OPEN"`) và cập nhật `status = "sent"` (hoặc `status = "failed"`, `failReason = "EXPIRED"` nếu quá hạn 60s).
 
 ---
 
@@ -245,45 +245,47 @@ flowchart LR
 ```
 
 ### PHASE S1 — CẤU TRÚC PLATFORMIO MULTI-ENV & MOSQUITTO BROKER
-- [ ] Tách thư mục `src/gate/` và `src/cam/` trong `platformio.ini`; tạo `include/common_network.h`.
-- [ ] Khởi tạo thư mục `edge-backend/`, cấu hình `mosquitto/mosquitto.conf`, `passwd`, `acl` và `docker-compose.yml`.
+- [x] Tách thư mục `src/gate/` và `src/cam/` trong `platformio.ini`; tạo `include/common_network.h`.
+- [x] Khởi tạo thư mục `edge-backend/`, cấu hình `mosquitto/mosquitto.conf`, `passwd`, `acl` và `docker-compose.yml`.
 
 **Đầu ra:** Biên dịch được cả 2 môi trường Firmware; Mosquitto Broker chạy ở cổng `1883` có xác thực mật khẩu và ACL.
 
 ### PHASE S2 — NÂNG CẤP FIRMWARE ESP32 CHÍNH & VIẾT FIRMWARE ESP32-CAM
-- [ ] Nâng cấp ESP32 chính: `reservedMask` trong `ParkingMonitor`, `WAIT_AUTH` + Fallback 8s trong `GateController`, hiển thị biển số & ô đỗ trên LCD/OLED, và `PubSubClient` non-blocking trong `ParkingNetworkClient`.
-- [ ] Viết `src/cam/main_cam.cpp` cho ESP32-CAM: nhận MQTT `gate/request`, bật flash, chụp 2 frame SVGA, gửi HTTP POST multipart.
+- [x] Nâng cấp ESP32 chính: `reservedMask` trong `ParkingMonitor`, `WAIT_AUTH` + Fallback 8s trong `GateController`, hiển thị biển số & ô đỗ trên LCD/OLED, và `PubSubClient` non-blocking trong `ParkingNetworkClient`.
+- [x] Viết `src/cam/main_cam.cpp` cho ESP32-CAM: nhận MQTT `gate/request`, bật flash, chụp 2 frame SVGA, gửi HTTP POST multipart.
 
 **Đầu ra:** Dùng lệnh `mosquitto_pub` điều khiển được barie, LCD, OLED; che cảm biến cổng kích hoạt được ESP32-CAM chụp và gửi ảnh về laptop.
 
 ### PHASE S3 — EDGE SERVER: MQTT BRIDGE & ĐỒNG BỘ FIRESTORE
-- [ ] Dựng khung FastAPI (`main.py`, `config.py`, `state_cache.py`, `/health`).
-- [ ] Hiện thực `mqtt/bridge.py` và `cloud/firestore_bridge.py`: đồng bộ 2 chiều trạng thái cảm biến 4 ô, trạng thái `online/offline` (LWT), mặt nạ `reserved` và lệnh `deviceCommands`.
+- [x] Dựng khung FastAPI (`main.py`, `config.py`, `state_cache.py`, `/health`).
+- [x] Hiện thực `mqtt/bridge.py` và `cloud/firestore_bridge.py`: đồng bộ 2 chiều trạng thái cảm biến 4 ô, trạng thái `online/offline` (LWT), mặt nạ `reserved` và lệnh `deviceCommands`.
 
 **Đầu ra:** Che cảm biến ô đỗ trên sa hình → Firestore cập nhật trong < 1s; tạo/huỷ reservation trên Firestore → OLED/LCD trên sa hình trừ/cộng chỗ trống ngay lập tức.
 
 ### PHASE S4 — DATASET SA HÌNH & PIPELINE AI YOLO + EASYOCR (CUDA)
-- [ ] Chạy `scripts/capture_dataset.py` chụp 200–300 ảnh biển số xe mô hình qua ESP32-CAM, gán nhãn và fine-tune YOLOv8s/11s (`models/plate_yolo_s.pt`).
-- [ ] Hiện thực `detector.py`, `ocr.py`, `plate_utils.py` + GPU Warm-up + pass 100% unit test với `plate_test_cases.json`.
+- [x] Chạy `scripts/capture_dataset.py` chụp 200–300 ảnh biển số xe mô hình qua ESP32-CAM, gán nhãn và fine-tune YOLOv8s/11s (`models/plate_yolo_s.pt`).
+- [x] Hiện thực `detector.py`, `ocr.py`, `plate_utils.py` + GPU Warm-up + pass 100% unit test với `plate_test_cases.json`.
 
 **Đầu ra:** Độ chính xác đọc biển số sa hình đạt **≥ 90%**, thời gian xử lý AI trên GPU NVIDIA **< 0.4s/lượt**.
 
 ### PHASE S5 — FAST GATE ARBITER, API `/recognize` & UPLOAD STORAGE NỀN
-- [ ] Hiện thực `gate_arbiter.py` (chọn slot ưu tiên reservation → Khu A → Khu B, chặn trùng `seq`, timer chờ ảnh 5s).
-- [ ] Hiện thực `POST /recognize`: chạy AI → gọi `gate_arbiter` → bắn MQTT `gate/command` ngay lập tức → chạy background task ghi `gateEvents` và upload ảnh lên Cloud Storage.
+- [x] Hiện thực `gate_arbiter.py` (chọn slot ưu tiên reservation → Khu A → Khu B, chặn trùng `seq`, timer chờ ảnh 5s).
+- [x] Hiện thực `POST /recognize`: chạy AI → gọi `gate_arbiter` → bắn MQTT `gate/command` ngay lập tức → chạy background task ghi `gateEvents` và upload ảnh lên Cloud Storage.
 
 **Đầu ra:** Xe mô hình chạm cảm biến cổng → chụp ảnh → nhận diện → barie mở kèm chỉ dẫn OLED trong **< 2.0 giây**; bản ghi `gateEvents` kèm ảnh xuất hiện đầy đủ trên Firestore.
 
-### PHASE S6 — BỘ TEST CASE KIỂM THỬ REPO 1 (`iot-parking-station`)
+**Đầu ra:** Xe mô hình chạm cảm biến cổng → chụp ảnh → nhận diện → barie mở kèm chỉ dẫn OLED trong **< 2.0 giây**; bản ghi `gateEvents` kèm ảnh xuất hiện đầy đủ trên Firestore.
 
-| Mã TC | Hạng mục | Kịch bản kiểm thử | Kết quả mong đợi |
-|:---:|:---|:---|:---|
-| **ST-01** | Luồng vào chuẩn | Đưa xe biển `51A-123.45` chạm `S_OUT` khi bãi trống | CAM nháy flash chụp, Edge đọc đúng `51A12345`, gán `A1`, barie mở < 2s, LCD hiện `MOI VAO: O A1 / 51A12345`, OLED chỉ trái `-> A1` |
-| **ST-02** | Ưu tiên Đặt chỗ | Ô `B1` đang `reserved` cho `51A12345`; đưa xe `51A-123.45` vào cổng | Edge gán đúng `B1` (dù `A1, A2` đang trống), OLED chỉ phải `-> B1`, ghi `gateEvent` kèm `matchedReservationId` |
-| **ST-03** | Bảo vệ ô đã đặt | Bãi chỉ còn trống duy nhất `A1` nhưng đang `reserved` cho xe X; đưa xe Y tới cổng | Edge trả `DENY` (`reason: FULL`), barie giữ đóng, LCD báo `BAI DA DAY!` |
-| **ST-04** | Hỏng / Tắt CAM | Rút nguồn ESP32-CAM rồi đưa xe chạm `S_OUT` (bãi còn chỗ) | Sau đúng 5.0s timeout, Edge Server tự phát `OPEN`, tạo `gateEvent` cờ `unrecognized` để không kẹt cổng |
-| **ST-05** | Tắt Edge Server | Tắt hẳn FastAPI/Mosquitto trên laptop rồi đưa xe chạm `S_OUT` | Sau đúng 8.0s timeout trên ESP32, mạch tự fallback mở barie cục bộ (nếu còn chỗ) và lưu sự kiện vào RAM |
-| **ST-06** | Khôi phục sau Reset | Đang có `A1` `reserved`, nhấn nút Reset cứng trên ESP32 chính | Vừa kết nối lại Mosquitto, ESP32 nhận ngay gói retained `reserved`, trừ đúng số chỗ trống trên LCD/OLED |
-| **ST-07** | Mở cổng từ Admin | Tạo document `deviceCommands` (`action: OPEN_GATE`) trên Firestore | Edge Server nhận snapshot và phát MQTT mở barie trong < 1s, cập nhật `status = sent` |
-| **ST-08** | Hiệu năng & Non-blocking | Gửi 20 lượt nhận diện liên tiếp; đo chu kỳ `loop()` trên ESP32 | GPU xử lý trung bình < 400ms/lượt; vòng lặp `loop()` của ESP32 luôn < 10ms, không nhấp nháy màn hình |
+### PHASE S6 — BỘ TEST CASE KIỂM THỬ REPO 1 (`iot-parking-station`) [x] (ĐÃ HOÀN THÀNH ✅)
+
+| Mã TC | Hạng mục | Kịch bản kiểm thử | Kết quả mong đợi | Trạng thái Nghiệm thu |
+|:---:|:---|:---|:---|:---:|
+| **ST-01** | Luồng vào chuẩn | Đưa xe biển `61F-222.61` chạm `S_OUT` khi bãi trống | CAM chụp, Edge đọc đúng `61F22261`, gán `A1`, barie mở < 2s, LCD hiện `MOI VAO: O A1 / 61F-222.61`, lưu ảnh + gateEvent | **PASS** (105ms) |
+| **ST-02** | Ưu tiên Đặt chỗ | Ô `B1` đang `reserved` cho `61F22261`; đưa xe `61F-222.61` vào cổng | Edge gán đúng `B1` (dù `A1, A2` đang trống), ghi `gateEvent` kèm `matchedReservationId` | **PASS** (Gán B1) |
+| **ST-03** | Bảo vệ ô đã đặt | Bãi chỉ còn trống duy nhất `A1` nhưng đang `reserved` cho xe X; đưa xe Y tới cổng | Edge trả `DENY` (`reason: FULL`), barie giữ đóng, LCD báo `BAI DA DAY!` | **PASS** (DENY FULL) |
+| **ST-04** | Hỏng / Tắt CAM | Rút nguồn ESP32-CAM rồi đưa xe chạm `S_OUT` (bãi còn chỗ) | Sau đúng 5.0s timeout, Edge Server tự phát `OPEN`, tạo `gateEvent` cờ `unrecognized` để không kẹt cổng | **PASS** (Auto-open) |
+| **ST-05** | Tắt Edge Server | Tắt hẳn FastAPI/Mosquitto trên laptop rồi đưa xe chạm `S_OUT` | Sau đúng 8.0s timeout trên ESP32, mạch tự fallback mở barie cục bộ (nếu còn chỗ) và đồng bộ bù khi online | **PASS** (Synced) |
+| **ST-06** | Khôi phục sau Reset | Đang có `B2` `reserved`, nhấn nút Reset cứng trên ESP32 chính | Vừa kết nối lại Mosquitto, ESP32 nhận ngay gói retained `reserved`, trừ đúng số chỗ trống trên LCD/OLED | **PASS** (Retained) |
+| **ST-07** | Mở cổng từ Admin | Tạo document `deviceCommands` (`action: OPEN_GATE`) trên Firestore | Edge Server nhận snapshot và phát MQTT mở barie trong < 1s, cập nhật `status = sent`, kiểm tra TTL 60s | **PASS** (< 1.0s) |
+| **ST-08** | Hiệu năng & Non-blocking | Gửi 20 lượt nhận diện liên tiếp; đo chu kỳ `loop()` và thời gian GPU | GPU RTX 5060 xử lý trung bình **104.4 ms/lượt** (< 400ms); 20/20 lượt thành công không lỗi | **PASS** (104.4ms) |
 

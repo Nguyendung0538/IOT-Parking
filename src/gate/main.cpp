@@ -46,9 +46,9 @@ void setup() {
     Serial.println(F(" OK"));
     Serial.flush();
 
-    // Khởi động ParkingNetworkClient
+    // Khởi động ParkingNetworkClient (MQTT hai chiều)
     Serial.print(F("[Init] ParkingNetworkClient..."));
-    network.begin();
+    network.begin(&parking, &gate);
     Serial.println(F(" OK"));
     Serial.flush();
 
@@ -65,7 +65,7 @@ void loop() {
         parking.printStatus();
     }
 
-    // 2. Cập nhật máy trạng thái Barie & Cảm biến cổng vào/ra
+    // 2. Cập nhật máy trạng thái Barie & Cảm biến cổng vào/ra (FSM + Fallback 8s)
     gate.update(parking.isFull());
 
     if (gate.carJustEntered()) {
@@ -76,15 +76,9 @@ void loop() {
         Serial.println(F("\n[GATE NOTIFY] >> 1 XE ROI BAI THANH CONG! <<"));
     }
 
-    // 3. Cập nhật giao diện màn hình LCD & OLED
-    display.update(
-        parking.getTotalAvailable(),
-        parking.getAvailableA(),
-        parking.getAvailableB(),
-        gate.isBarrierOpen(),
-        gate.getLastEvent()
-    );
+    // 3. Cập nhật giao diện màn hình LCD & OLED (Hiển thị nhận diện, điều hướng ô đỗ)
+    display.update(parking, gate);
 
-    // 4. Đồng bộ Telemetry lên Backend
+    // 4. Đồng bộ Telemetry, nhận diện biển số & xử lý lệnh MQTT
     network.update(parking, gate);
 }
