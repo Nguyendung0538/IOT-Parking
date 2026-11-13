@@ -268,3 +268,19 @@ class MqttBridge:
         else:
             logger.error("[MQTT TX] Lỗi publish_gate_command rc=%d", info.rc)
             return False
+
+    def publish_cam_test(self, test_id: str, use_flash: bool = False) -> bool:
+        """Publish lệnh chụp ảnh kiểm thử xuống topic parking/{CAM_DEVICE_ID}/test."""
+        if not self._connected:
+            logger.error("Không thể publish_cam_test: Chưa kết nối MQTT")
+            return False
+
+        topic = f"parking/{settings.CAM_DEVICE_ID}/test"
+        payload_str = json.dumps({"testId": test_id, "useFlash": use_flash})
+        info = self.client.publish(topic, payload_str, qos=1, retain=False)
+        if info.rc == mqtt.MQTT_ERR_SUCCESS:
+            logger.info("[MQTT TX] >> PUBLISH CAM TEST (%s): %s", topic, payload_str)
+            return True
+        else:
+            logger.error("[MQTT TX] Lỗi publish_cam_test rc=%d", info.rc)
+            return False

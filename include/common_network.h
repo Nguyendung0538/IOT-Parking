@@ -45,5 +45,6 @@
 #define TOPIC_RESERVED "parking/ESP32_PARKING_01/reserved"
 #define TOPIC_GATE_STATUS "parking/ESP32_PARKING_01/status"
 #define TOPIC_CAM_STATUS "parking/ESP32_CAM_01/status"
+#define TOPIC_CAM_TEST "parking/ESP32_CAM_01/test"
 
 #endif // COMMON_NETWORK_H

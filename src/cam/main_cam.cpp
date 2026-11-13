@@ -17,6 +17,7 @@ static void initCamera();
 static void reconnectMqtt();
 static void onMqttMessage(char* topic, byte* payload, unsigned int length);
 static void captureAndUpload(uint32_t seq, const char* direction);
+static void captureAndUploadTest(const char* testId, bool useFlash);
 
 void setup() {
     // 1. Nháy nhanh đèn Flash LED 100ms ngay khi boot để báo hiệu phần cứng đang chạy
@@ -149,9 +150,10 @@ static void reconnectMqtt() {
         Serial.println(F("THANH CONG!"));
         camMqttClient.publish(TOPIC_CAM_STATUS, "online", true);
 
-        // Đăng ký nhận yêu cầu chụp từ cổng ESP32 Gate
+        // Đăng ký nhận yêu cầu chụp từ cổng ESP32 Gate và từ Web Test Cam
         camMqttClient.subscribe(TOPIC_GATE_REQUEST, 1);
-        Serial.printf("[CAM MQTT] Da subscribe: %s\n", TOPIC_GATE_REQUEST);
+        camMqttClient.subscribe(TOPIC_CAM_TEST, 1);
+        Serial.printf("[CAM MQTT] Da subscribe: %s & %s\n", TOPIC_GATE_REQUEST, TOPIC_CAM_TEST);
     } else {
         Serial.printf("THAT BAI, rc=%d. Thu lai sau 5s.\n", camMqttClient.state());
     }
@@ -159,6 +161,20 @@ static void reconnectMqtt() {
 }
 
 static void onMqttMessage(char* topic, byte* payload, unsigned int length) {
+    if (strcmp(topic, TOPIC_CAM_TEST) == 0) {
+        JsonDocument doc;
+        DeserializationError err = deserializeJson(doc, payload, length);
+        if (err) {
+            Serial.printf("[CAM TEST] Loi parse JSON: %s\n", err.c_str());
+            return;
+        }
+        const char* testId = doc["testId"] | "test_0";
+        bool useFlash = doc["useFlash"] | false;
+        Serial.printf("\n[CAM TEST] >>> NHAN LENH CHUP TEST: testId=%s, flash=%d <<<\n", testId, useFlash);
+        captureAndUploadTest(testId, useFlash);
+        return;
+    }
+
     if (strcmp(topic, TOPIC_GATE_REQUEST) != 0) {
         return;
     }
@@ -335,4 +351,82 @@ static void captureAndUpload(uint32_t seq, const char* direction) {
     if (fb2) esp_camera_fb_return(fb2);
 
     Serial.printf("[CAM UPLOAD] Hoan tat toan bo luong upload trong %lu ms.\n", millis() - startMs);
+}
+
+static void captureAndUploadTest(const char* testId, bool useFlash) {
+    if (!cameraReady) {
+        Serial.println(F("[CAM TEST] Loi: Camera chua san sang!"));
+        return;
+    }
+
+    unsigned long startMs = millis();
+
+    if (useFlash) {
+        digitalWrite(PIN_CAM_FLASH_LED, HIGH);
+        delay(CAM_FLASH_WARMUP_MS);
+    }
+
+    // Xả 1 frame cũ trong FIFO để lấy ảnh mới nhất
+    camera_fb_t* staleFb = esp_camera_fb_get();
+    if (staleFb) {
+        esp_camera_fb_return(staleFb);
+    }
+
+    camera_fb_t* fb = esp_camera_fb_get();
+    if (useFlash) {
+        digitalWrite(PIN_CAM_FLASH_LED, LOW);
+    }
+
+    if (!fb) {
+        Serial.println(F("[CAM TEST] Loi: Khong chup duoc anh test!"));
+        return;
+    }
+
+    WiFiClient httpClient;
+    httpClient.setTimeout(4000);
+    if (!httpClient.connect(EDGE_SERVER_IP, 8000)) {
+        Serial.println(F("[CAM TEST] Khong ket noi duoc Edge Server :8000!"));
+        esp_camera_fb_return(fb);
+        return;
+    }
+
+    const char* boundary = "----ESP32CAMTestBoundary";
+    String partTestId = String("--") + boundary + "\r\n" +
+        "Content-Disposition: form-data; name=\"test_id\"\r\n\r\n" +
+        String(testId) + "\r\n";
+
+    String fileHead = String("--") + boundary + "\r\n" +
+        "Content-Disposition: form-data; name=\"image\"; filename=\"test_frame.jpg\"\r\n" +
+        "Content-Type: image/jpeg\r\n\r\n";
+    String fileTail = "\r\n";
+    String endBoundary = String("--") + boundary + "--\r\n";
+
+    size_t totalLen = partTestId.length() + fileHead.length() + fb->len + fileTail.length() + endBoundary.length();
+
+    httpClient.printf("POST /debug/cam-test-upload HTTP/1.1\r\n");
+    httpClient.printf("Host: %s:8000\r\n", EDGE_SERVER_IP);
+    httpClient.printf("X-API-Key: %s\r\n", CAM_SHARED_API_KEY);
+    httpClient.printf("Content-Type: multipart/form-data; boundary=%s\r\n", boundary);
+    httpClient.printf("Content-Length: %u\r\n", totalLen);
+    httpClient.printf("Connection: close\r\n\r\n");
+
+    httpClient.print(partTestId);
+    httpClient.print(fileHead);
+    httpClient.write(fb->buf, fb->len);
+    httpClient.print(fileTail);
+    httpClient.print(endBoundary);
+    httpClient.flush();
+
+    unsigned long waitStart = millis();
+    while (httpClient.connected() && (millis() - waitStart < 3000)) {
+        if (httpClient.available()) {
+            httpClient.readStringUntil('\n');
+            break;
+        }
+        delay(10);
+    }
+
+    httpClient.stop();
+    esp_camera_fb_return(fb);
+    Serial.printf("[CAM TEST] Da gui anh test (%u bytes) trong %lu ms.\n", fb->len, millis() - startMs);
 }

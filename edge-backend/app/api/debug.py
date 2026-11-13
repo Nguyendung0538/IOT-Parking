@@ -4,15 +4,24 @@ Cho phép can thiệp, quan sát và kiểm thử hệ thống hoàn toàn mà k
 hoặc khi chạy ở chế độ mô phỏng / ngắt kết nối Firebase.
 """
 
+import asyncio
+import base64
 from datetime import datetime, timedelta, timezone
 import time
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+
+import cv2
+from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile, status
+import numpy as np
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.models import ReservationItem, SlotState, StatePayload
 
 router = APIRouter(prefix="/debug", tags=["Debug"])
+
+# Lưu các phiên chụp test đang chờ phản hồi từ ESP32-CAM
+_pending_cam_tests: Dict[str, Dict[str, Any]] = {}
 
 
 class CreateReservationRequest(BaseModel):
@@ -162,6 +171,77 @@ def simulate_state(request: Request, body: SimulateStateRequest) -> Dict[str, An
     }
 
 
+def _run_yolo_and_visualize(ai_pipeline: Any, frames_bytes: List[bytes]) -> Dict[str, Any]:
+    """Chạy YOLO + OCR và trả về kết quả kèm ảnh gốc (có vẽ BBox) & ảnh crop dạng Base64."""
+    res = ai_pipeline.recognize_frames(frames_bytes)
+
+    best_idx = res.best_frame_index if 0 <= res.best_frame_index < len(frames_bytes) else 0
+    raw_bytes = frames_bytes[best_idx]
+
+    nparr = np.frombuffer(raw_bytes, np.uint8)
+    img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+    yolo_boxes: List[Dict[str, Any]] = []
+    annotated_b64: Optional[str] = None
+    crop_b64: Optional[str] = None
+
+    if img_bgr is not None and img_bgr.size > 0:
+        annotated = img_bgr.copy()
+        detected_plates = ai_pipeline.detector.detect_and_crop(img_bgr)
+        for dp in detected_plates:
+            x1, y1, x2, y2 = dp.bbox
+            color = (0, 255, 100) if dp.source == "yolo" else (0, 165, 255)
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+            label = f"{dp.source.upper()} {dp.confidence:.2f}"
+            cv2.putText(
+                annotated,
+                label,
+                (x1, max(20, y1 - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                color,
+                2,
+                cv2.LINE_AA,
+            )
+            yolo_boxes.append({
+                "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                "confidence": round(float(dp.confidence), 3),
+                "source": dp.source,
+            })
+
+        _, ann_buf = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        if ann_buf is not None:
+            annotated_b64 = base64.b64encode(ann_buf.tobytes()).decode("ascii")
+
+        # Ưu tiên ảnh crop từ kết quả voting; nếu OCR không đọc được chữ vẫn lấy ảnh crop của YOLO để kiểm tra
+        if res.crop_jpeg_bytes:
+            crop_b64 = base64.b64encode(res.crop_jpeg_bytes).decode("ascii")
+        elif detected_plates:
+            _, crop_buf = cv2.imencode(".jpg", detected_plates[0].crop_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
+            if crop_buf is not None:
+                crop_b64 = base64.b64encode(crop_buf.tobytes()).decode("ascii")
+    else:
+        annotated_b64 = base64.b64encode(raw_bytes).decode("ascii")
+
+    return {
+        "status": "success",
+        "plateRaw": res.plate_raw,
+        "plateNormalized": res.plate_normalized,
+        "plateDisplay": res.plate_display,
+        "confidence": res.confidence,
+        "isValid": res.is_valid,
+        "latencyMs": res.latency_ms,
+        "detectorUsed": res.detector_used,
+        "totalCandidates": res.total_candidates,
+        "bestFrameIndex": res.best_frame_index,
+        "hasCropImage": crop_b64 is not None,
+        "yoloDetected": len(yolo_boxes) > 0,
+        "yoloBoxes": yolo_boxes,
+        "annotatedImageBase64": annotated_b64,
+        "cropImageBase64": crop_b64,
+    }
+
+
 @router.post("/recognize-test")
 async def test_recognition(
     request: Request,
@@ -181,19 +261,101 @@ async def test_recognition(
     if not frames_bytes:
         raise HTTPException(status_code=400, detail="Không có dữ liệu ảnh hợp lệ")
 
-    res = ai_pipeline.recognize_frames(frames_bytes)
+    return _run_yolo_and_visualize(ai_pipeline, frames_bytes)
 
+
+class CamTestCaptureRequest(BaseModel):
+    useFlash: bool = Field(False, description="Bật đèn Flash LED khi chụp test")
+    timeoutSeconds: float = Field(8.0, description="Thời gian tối đa chờ ảnh từ ESP32-CAM")
+
+
+@router.get("/cam-status")
+def get_cam_test_status(request: Request) -> Dict[str, Any]:
+    """Lấy trạng thái kết nối ESP32-CAM, MQTT và AI Pipeline cho trang Web Test Cam."""
+    cache = request.app.state.cache
+    mqtt = getattr(request.app.state, "mqtt", None)
+    ai_pipeline = getattr(request.app.state, "ai_pipeline", None)
+    snap = cache.snapshot()
     return {
-        "status": "success",
-        "plateRaw": res.plate_raw,
-        "plateNormalized": res.plate_normalized,
-        "plateDisplay": res.plate_display,
-        "confidence": res.confidence,
-        "isValid": res.is_valid,
-        "latencyMs": res.latency_ms,
-        "detectorUsed": res.detector_used,
-        "totalCandidates": res.total_candidates,
-        "bestFrameIndex": res.best_frame_index,
-        "hasCropImage": res.crop_jpeg_bytes is not None,
+        "camOnline": snap.get("camOnline", False),
+        "mqttConnected": bool(mqtt and getattr(mqtt, "_connected", False)),
+        "aiReady": ai_pipeline is not None,
     }
+
+
+@router.post("/cam-test-capture")
+async def trigger_cam_test_capture(
+    request: Request,
+    body: CamTestCaptureRequest = CamTestCaptureRequest(),
+) -> Dict[str, Any]:
+    """Gửi lệnh MQTT kích hoạt ESP32-CAM chụp ảnh test và đợi kết quả từ YOLO."""
+    mqtt = getattr(request.app.state, "mqtt", None)
+    ai_pipeline = getattr(request.app.state, "ai_pipeline", None)
+    if not ai_pipeline:
+        raise HTTPException(status_code=503, detail="AI Pipeline chưa sẵn sàng")
+    if not mqtt or not getattr(mqtt, "_connected", False):
+        raise HTTPException(status_code=503, detail="MQTT Broker chưa kết nối. Hãy đảm bảo Mosquitto đang chạy.")
+
+    test_id = f"test_{int(time.time() * 1000)}"
+    loop = asyncio.get_running_loop()
+    event = asyncio.Event()
+    _pending_cam_tests[test_id] = {
+        "event": event,
+        "loop": loop,
+        "result": None,
+    }
+
+    ok = mqtt.publish_cam_test(test_id=test_id, use_flash=body.useFlash)
+    if not ok:
+        _pending_cam_tests.pop(test_id, None)
+        raise HTTPException(status_code=503, detail="Không thể gửi lệnh chụp tới ESP32-CAM qua MQTT")
+
+    try:
+        await asyncio.wait_for(event.wait(), timeout=body.timeoutSeconds)
+    except asyncio.TimeoutError:
+        _pending_cam_tests.pop(test_id, None)
+        raise HTTPException(
+            status_code=504,
+            detail="Hết thời gian chờ ảnh từ ESP32-CAM (kiểm tra ESP32-CAM đã online và nạp firmware test chưa)",
+        )
+
+    entry = _pending_cam_tests.pop(test_id, None)
+    if not entry or entry.get("result") is None:
+        raise HTTPException(status_code=500, detail="Không nhận được dữ liệu ảnh hợp lệ")
+
+    return entry["result"]
+
+
+@router.post("/cam-test-upload")
+async def receive_cam_test_upload(
+    request: Request,
+    test_id: str = Form(...),
+    image: UploadFile = File(...),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
+) -> Dict[str, Any]:
+    """Endpoint riêng nhận ảnh chụp test từ ESP32-CAM (không mở barie, không ghi Firestore)."""
+    if not x_api_key or x_api_key.strip() != settings.CAM_SHARED_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing X-API-Key",
+        )
+
+    ai_pipeline = getattr(request.app.state, "ai_pipeline", None)
+    if not ai_pipeline:
+        raise HTTPException(status_code=503, detail="AI Pipeline chưa khởi tạo")
+
+    img_bytes = await image.read()
+    if not img_bytes:
+        raise HTTPException(status_code=400, detail="Empty image")
+
+    result = _run_yolo_and_visualize(ai_pipeline, [img_bytes])
+
+    pending = _pending_cam_tests.get(test_id)
+    if pending:
+        pending["result"] = result
+        loop = pending["loop"]
+        event = pending["event"]
+        loop.call_soon_threadsafe(event.set)
+
+    return {"ok": True, "testId": test_id}
 

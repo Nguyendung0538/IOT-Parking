@@ -18,6 +18,7 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.debug import router as debug_router
@@ -141,6 +142,12 @@ app.include_router(debug_router)
 app.include_router(recognize_router)
 
 
+@app.get("/cam-test", include_in_schema=False)
+def get_cam_test_page():
+    static_file = Path(__file__).resolve().parent.parent / "static" / "cam-test.html"
+    return FileResponse(str(static_file))
+
+
 @app.get("/")
 def get_root():
     return {
@@ -151,4 +158,5 @@ def get_root():
         "healthUrl": "/health",
         "debugUrl": "/debug/state",
         "recognizeUrl": "/recognize",
+        "camTestUrl": "/cam-test",
     }
