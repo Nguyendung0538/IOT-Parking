@@ -4,6 +4,8 @@
 .vscode/launch.json
 .vscode/ipch
 node_modules
+yolo_plate_dataset/
+
 
 # Python & Edge Backend
 __pycache__/
@@ -18,3 +20,5 @@ edge-backend/.env
 edge-backend/mosquitto/passwd
 edge-backend/mosquitto/data/
 edge-backend/mosquitto/log/
+node_modules
+compile_commands.json
