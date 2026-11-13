@@ -71,6 +71,17 @@ class Settings(BaseSettings):
     USE_GPU: bool = True
     PADDING_RATIO: float = 0.12
 
+    # 7. Camera Nguồn (Mặc định dùng Camera Điện thoại qua IP Webcam)
+    CAM_SOURCE: str = "phone"  # "phone" | "esp32cam"
+    PHONE_CAM_URL: str = ""    # VD: http://192.168.1.15:8080/shot.jpg
+    PHONE_CAM_FRAMES: int = 2
+    PHONE_CAM_INTERVAL_MS: int = 120
+    PHONE_CAM_MAX_ATTEMPTS: int = 5     # Số lần chụp thử tối đa nếu OCR chưa đọc được biển
+    PHONE_CAM_RETRY_DELAY_MS: int = 250 # Thời gian chờ giữa các lần chụp lại (ms)
+
+    # 8. Điều khiển gán ô khi xe vào
+    ASSIGN_SLOT_ON_ENTRY: bool = False  # Tạm thời tắt gán ô cố định khi xe vào cổng
+
     # Generated Topic Properties (Không hardcode chuỗi rải rác)
     @property
     def topic_state(self) -> str:
@@ -98,3 +109,53 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+_CAM_CONFIG_FILE = Path(__file__).resolve().parent.parent / "data" / "cam_config.json"
+
+
+def normalize_phone_cam_url(raw_url: str) -> str:
+    """Chuẩn hóa địa chỉ IP/URL của app IP Webcam thành endpoint /shot.jpg."""
+    url = (raw_url or "").strip()
+    if not url:
+        return ""
+    if not url.startswith(("http://", "https://")):
+        url = "http://" + url
+    url = url.rstrip("/")
+    if not url.endswith("/shot.jpg"):
+        url = url + "/shot.jpg"
+    return url
+
+
+def load_persisted_cam_config() -> None:
+    """Nạp cấu hình camera đã lưu từ data/cam_config.json (nếu có)."""
+    if not _CAM_CONFIG_FILE.exists():
+        return
+    try:
+        import json
+        data = json.loads(_CAM_CONFIG_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            if data.get("cam_source") in ("phone", "esp32cam"):
+                settings.CAM_SOURCE = data["cam_source"]
+            if isinstance(data.get("phone_cam_url"), str):
+                settings.PHONE_CAM_URL = normalize_phone_cam_url(data["phone_cam_url"])
+    except Exception:
+        pass
+
+
+def save_persisted_cam_config(cam_source: str, phone_cam_url: str) -> None:
+    """Lưu cấu hình camera xuống data/cam_config.json để giữ lại sau khi restart."""
+    import json
+    _CAM_CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _CAM_CONFIG_FILE.write_text(
+        json.dumps(
+            {
+                "cam_source": cam_source,
+                "phone_cam_url": phone_cam_url,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+load_persisted_cam_config()

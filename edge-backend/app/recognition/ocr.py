@@ -63,9 +63,10 @@ class PlateOCR:
 
         try:
             # 1. Thử nhận diện trên ảnh đã tiền xử lý CLAHE + Bilateral
+            # Cho phép dấu '.' và '-' trong allowlist để EasyOCR không ép dấu chấm (vd: 123.45) thành chữ số như '2' hay '1'
             results = self.reader.readtext(
                 processed,
-                allowlist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                allowlist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.-",
                 detail=1,
                 paragraph=False,
             )
@@ -74,7 +75,7 @@ class PlateOCR:
             if not results:
                 results = self.reader.readtext(
                     crop_bgr,
-                    allowlist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                    allowlist="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.-",
                     detail=1,
                     paragraph=False,
                 )
@@ -97,8 +98,10 @@ class PlateOCR:
         parsed_boxes = []
 
         for bbox, text, conf in ocr_results:
-            clean_text = "".join(c for c in text.upper() if c.isalnum())
-            if not clean_text or conf < 0.2:
+            # Giữ lại chữ, số và dấu '.'/'-' làm gợi ý định dạng, bỏ qua box chỉ toàn dấu câu
+            hint_text = "".join(c for c in text.upper() if c.isalnum() or c in ".-")
+            alnum_text = "".join(c for c in hint_text if c.isalnum())
+            if not alnum_text or conf < 0.2:
                 continue
 
             # Tọa độ 4 đỉnh của box: [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
@@ -111,7 +114,8 @@ class PlateOCR:
                 "cx": cx,
                 "cy": cy,
                 "h": max(h, 10.0),
-                "text": clean_text,
+                "text": hint_text,
+                "alnum_len": len(alnum_text),
                 "conf": float(conf),
             })
 
@@ -141,20 +145,22 @@ class PlateOCR:
         # Sắp xếp các dòng từ trên xuống dưới theo cy trung bình
         lines.sort(key=lambda line: np.mean([b["cy"] for b in line]))
 
-        # Trong từng dòng, sắp xếp các box từ trái sang phải theo cx
-        final_text_parts = []
+        # Trong từng dòng, sắp xếp các box từ trái sang phải theo cx, nối các dòng bằng dấu cách
+        line_strings = []
         total_chars = 0
         weighted_conf_sum = 0.0
 
         for line in lines:
             line.sort(key=lambda b: b["cx"])
+            line_parts = []
             for b in line:
-                final_text_parts.append(b["text"])
-                chars_count = len(b["text"])
+                line_parts.append(b["text"])
+                chars_count = b["alnum_len"]
                 total_chars += chars_count
                 weighted_conf_sum += b["conf"] * chars_count
+            line_strings.append(" ".join(line_parts))
 
-        full_text = "".join(final_text_parts)
+        full_text = " ".join(line_strings)
         avg_conf = (weighted_conf_sum / total_chars) if total_chars > 0 else 0.0
 
         return full_text, round(avg_conf, 3)

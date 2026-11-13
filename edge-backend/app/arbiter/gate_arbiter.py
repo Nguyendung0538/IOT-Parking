@@ -292,7 +292,7 @@ class GateArbiter:
             is_slot_occupied = sensor_occ.get(res_slot, False)
 
             if not is_slot_occupied:
-                # Ô đã đặt đang trống -> Gán đúng ô đã đặt
+                # Ô đã đặt đang trống -> Gán đúng ô đã đặt cho xe có reservation
                 flags.append("matched_reservation")
                 decision = ArbiterDecision(
                     seq=seq,
@@ -383,7 +383,7 @@ class GateArbiter:
                 direction="IN",
                 action="OPEN",
                 status=status,
-                assigned_slot=free_slot,
+                assigned_slot=free_slot if settings.ASSIGN_SLOT_ON_ENTRY else "",
                 matched_reservation_id=None,
                 deny_reason=None,
                 flags=flags,

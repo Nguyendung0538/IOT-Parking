@@ -84,7 +84,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
 
     # 6. Khởi tạo MQTT Bridge và liên kết chéo
-    mqtt_bridge = MqttBridge(cache=cache, settings=settings, cloud=cloud, arbiter=gate_arbiter)
+    mqtt_bridge = MqttBridge(
+        cache=cache,
+        settings=settings,
+        cloud=cloud,
+        arbiter=gate_arbiter,
+        ai_pipeline=ai_pipeline,
+        storage_uploader=storage_uploader,
+    )
     gate_arbiter.mqtt = mqtt_bridge
     cloud.mqtt = mqtt_bridge
 

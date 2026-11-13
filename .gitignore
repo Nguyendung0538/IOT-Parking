@@ -14,6 +14,7 @@ __pycache__/
 venv/
 edge-backend/.env
 *serviceAccount*.json
+edge-backend/data/captures/
 
 # Mosquitto Broker dynamic data
 edge-backend/mosquitto/passwd

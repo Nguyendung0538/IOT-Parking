@@ -1,7 +1,9 @@
 import json
 import logging
+import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+import urllib.request
 
 import paho.mqtt.client as mqtt
 from paho.mqtt.enums import CallbackAPIVersion
@@ -11,6 +13,35 @@ from app.models import GateCommandPayload, GateRequestPayload, StatePayload
 from app.state_cache import StateCache
 
 logger = logging.getLogger("mqtt_bridge")
+
+
+def fetch_phone_cam_frames(
+    url: str,
+    num_frames: int = 2,
+    interval_ms: int = 120,
+    timeout_s: float = 2.5,
+) -> List[bytes]:
+    """Kéo ảnh JPEG tức thời từ app IP Webcam trên điện thoại qua HTTP GET."""
+    frames: List[bytes] = []
+    if not url:
+        return frames
+
+    for idx in range(max(1, num_frames)):
+        try:
+            req = urllib.request.Request(url, headers={"Cache-Control": "no-cache"})
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                if resp.status == 200:
+                    data = resp.read()
+                    if data:
+                        frames.append(data)
+        except Exception as e:
+            logger.warning("[PhoneCam] Lỗi kéo frame #%d từ %s: %s", idx + 1, url, e)
+            break
+
+        if idx < num_frames - 1 and interval_ms > 0:
+            time.sleep(interval_ms / 1000.0)
+
+    return frames
 
 
 class MqttBridge:
@@ -24,15 +55,27 @@ class MqttBridge:
     - Phát mặt nạ đặt chỗ `parking/{DEVICE_ID}/reserved` (Retained)
     """
 
-    def __init__(self, cache: StateCache, cloud_bridge: Any = None, cloud: Any = None, arbiter: Any = None, **kwargs: Any):
+    def __init__(
+        self,
+        cache: StateCache,
+        cloud_bridge: Any = None,
+        cloud: Any = None,
+        arbiter: Any = None,
+        ai_pipeline: Any = None,
+        storage_uploader: Any = None,
+        **kwargs: Any,
+    ):
         self.cache = cache
         self.cloud = cloud if cloud is not None else cloud_bridge
         self.arbiter = arbiter
+        self.ai_pipeline = ai_pipeline
+        self.storage_uploader = storage_uploader
 
         self._connected = False
         self._last_message_at: float = 0.0
         self._message_count: int = 0
         self._parse_errors: int = 0
+        self._last_barrier_open: Optional[bool] = None
 
         self.client = mqtt.Client(
             callback_api_version=CallbackAPIVersion.VERSION2,
@@ -168,6 +211,11 @@ class MqttBridge:
             self.cloud.enqueue_slots(diff_slots, sensor_map)
             self.cloud.enqueue_lot_summary(self.cache.free_slots_public())
 
+        if self.cloud and payload.barrierOpen != self._last_barrier_open:
+            self._last_barrier_open = payload.barrierOpen
+            if hasattr(self.cloud, "enqueue_barrier_state"):
+                self.cloud.enqueue_barrier_state(payload.barrierOpen)
+
     def _handle_gate_request(self, payload_bytes: bytes) -> None:
         try:
             data = json.loads(payload_bytes.decode("utf-8"))
@@ -200,6 +248,128 @@ class MqttBridge:
                 payload.seq,
                 payload.direction,
             )
+
+            # Nếu đang bật chế độ Camera Điện Thoại, tự động kéo ảnh và phân xử ngay lập tức
+            if settings.CAM_SOURCE == "phone":
+                if settings.PHONE_CAM_URL and self.ai_pipeline and self.arbiter:
+                    t = threading.Thread(
+                        target=self._process_phone_cam_gate_request,
+                        args=(payload.seq, payload.direction),
+                        daemon=True,
+                    )
+                    t.start()
+                elif not settings.PHONE_CAM_URL:
+                    logger.warning(
+                        "[PhoneCam] CAM_SOURCE='phone' nhưng chưa cấu hình PHONE_CAM_URL! "
+                        "Hãy nhập IP điện thoại tại trang /cam-test."
+                    )
+
+    def _process_phone_cam_gate_request(self, seq: int, direction: str) -> None:
+        """Luồng nền tự động chụp từ Camera Điện thoại -> YOLO -> (Retry nếu OCR lỗi) -> GateArbiter -> Mở cổng."""
+        t0 = time.perf_counter()
+        max_attempts = max(1, settings.PHONE_CAM_MAX_ATTEMPTS)
+
+        best_frames: List[bytes] = []
+        best_res = None
+
+        for attempt in range(1, max_attempts + 1):
+            # Dừng retry nếu gần chạm ngưỡng Fail-safe Timer (chừa lại ~0.8s an toàn)
+            if attempt > 1 and (time.perf_counter() - t0) >= max(1.0, settings.CAMERA_TIMEOUT_S - 0.8):
+                logger.warning("[PhoneCam] Gần hết thời gian Fail-safe cho seq=%u -> Dừng retry.", seq)
+                break
+
+            frames_bytes = fetch_phone_cam_frames(
+                url=settings.PHONE_CAM_URL,
+                num_frames=settings.PHONE_CAM_FRAMES,
+                interval_ms=settings.PHONE_CAM_INTERVAL_MS,
+            )
+            if not frames_bytes:
+                logger.warning(
+                    "[PhoneCam] Lần %d/%d không lấy được ảnh từ %s (seq=%u).",
+                    attempt,
+                    max_attempts,
+                    settings.PHONE_CAM_URL,
+                    seq,
+                )
+                if attempt < max_attempts:
+                    time.sleep(settings.PHONE_CAM_RETRY_DELAY_MS / 1000.0)
+                continue
+
+            res = self.ai_pipeline.recognize_frames(frames_bytes)
+            best_frames = frames_bytes
+            best_res = res
+
+            if res.is_valid and res.plate_display:
+                if attempt > 1:
+                    logger.info(
+                        "[PhoneCam] Chụp lại lần %d/%d THÀNH CÔNG cho seq=%u -> '%s'",
+                        attempt,
+                        max_attempts,
+                        seq,
+                        res.plate_display,
+                    )
+                break
+
+            logger.info(
+                "[PhoneCam] Lần %d/%d chưa đọc được biển hợp lệ (raw='%s', seq=%u) -> %s",
+                attempt,
+                max_attempts,
+                res.plate_raw,
+                seq,
+                "Chụp lại..." if attempt < max_attempts else "Hết lượt thử.",
+            )
+            if attempt < max_attempts:
+                time.sleep(settings.PHONE_CAM_RETRY_DELAY_MS / 1000.0)
+
+        if not best_frames or best_res is None:
+            logger.warning(
+                "[PhoneCam] Không lấy được ảnh nào từ %s cho seq=%u. Chờ Fail-safe Timer.",
+                settings.PHONE_CAM_URL,
+                seq,
+            )
+            return
+
+        decision = self.arbiter.decide(
+            seq=seq,
+            direction=direction.upper().strip(),
+            plate_raw=best_res.plate_raw,
+            plate_normalized=best_res.plate_normalized,
+            plate_display=best_res.plate_display,
+            confidence=best_res.confidence,
+            is_valid=best_res.is_valid,
+        )
+
+        if not decision.is_duplicate:
+            self.publish_gate_command(
+                seq=decision.seq,
+                action=decision.action,
+                plate=decision.plate_for_lcd,
+                assigned_slot=decision.assigned_slot,
+                reason=decision.deny_reason,
+            )
+
+            if self.storage_uploader:
+                best_full_jpeg: Optional[bytes] = None
+                if 0 <= best_res.best_frame_index < len(best_frames):
+                    best_full_jpeg = best_frames[best_res.best_frame_index]
+                self.storage_uploader.submit_capture_and_event(
+                    decision=decision,
+                    full_jpeg_bytes=best_full_jpeg,
+                    crop_jpeg_bytes=best_res.crop_jpeg_bytes,
+                    latency_ms=best_res.latency_ms,
+                )
+
+        total_ms = (time.perf_counter() - t0) * 1000
+        logger.info(
+            "[PhoneCam Gate] seq=%u (%s) -> Plate='%s' (conf=%.2f) -> %s (slot=%s, total=%.1fms)",
+            seq,
+            direction,
+            decision.plate_display or "KHONG RO",
+            decision.confidence,
+            decision.action,
+            decision.assigned_slot,
+            total_ms,
+        )
 
     def _handle_device_status(self, kind: str, payload_bytes: bytes) -> None:
         status_str = payload_bytes.decode("utf-8", errors="ignore").strip().lower()

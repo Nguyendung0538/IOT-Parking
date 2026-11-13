@@ -165,6 +165,12 @@ class FirestoreBridge(CloudBridgeBase):
             "free_slots": free_slots,
         })
 
+    def enqueue_barrier_state(self, barrier_open: bool) -> None:
+        self._write_queue.put({
+            "type": "barrier_state",
+            "barrier_open": barrier_open,
+        })
+
     def enqueue_device_status(self, device_id: str, online: bool, kind: str) -> None:
         self._write_queue.put({
             "type": "device_status",
@@ -260,6 +266,7 @@ class FirestoreBridge(CloudBridgeBase):
         devices_to_write: Dict[str, Dict[str, Any]] = {}
         gate_events_to_write: List[Dict[str, Any]] = []
         update_lot_summary: Optional[int] = None
+        update_barrier_open: Optional[bool] = None
 
         for item in items:
             t = item["type"]
@@ -274,6 +281,8 @@ class FirestoreBridge(CloudBridgeBase):
                 gate_events_to_write.append(item)
             elif t == "lot_summary":
                 update_lot_summary = item["free_slots"]
+            elif t == "barrier_state":
+                update_barrier_open = item["barrier_open"]
 
         try:
             batch = self.db.batch()
@@ -315,6 +324,10 @@ class FirestoreBridge(CloudBridgeBase):
                     batch.set(lot_ref, {"deviceOnline": info["online"]}, merge=True)
                 elif info["kind"] == "cam":
                     batch.set(lot_ref, {"camOnline": info["online"]}, merge=True)
+
+            if update_barrier_open is not None:
+                lot_ref = self.db.collection("lots").document(settings.LOT_ID)
+                batch.set(lot_ref, {"barrierOpen": update_barrier_open}, merge=True)
 
             # 3. Ghi gateEvents: gateEvents/{autoId}
             for ev in gate_events_to_write:
@@ -481,6 +494,9 @@ class FirestoreBridge(CloudBridgeBase):
             if action == "OPEN_GATE":
                 if self.mqtt:
                     self.mqtt.publish_gate_command(seq=0, action="OPEN", plate="ADMIN_OPEN")
+            elif action == "CLOSE_GATE":
+                if self.mqtt:
+                    self.mqtt.publish_gate_command(seq=0, action="CLOSE", plate="ADMIN_CLOSE")
             else:
                 logger.warning("[Firestore Commands] Action chưa hỗ trợ: %s", action)
 

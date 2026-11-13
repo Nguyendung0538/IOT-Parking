@@ -15,8 +15,9 @@ from fastapi import APIRouter, File, Form, Header, HTTPException, Request, Uploa
 import numpy as np
 from pydantic import BaseModel, Field
 
-from app.config import settings
+from app.config import normalize_phone_cam_url, save_persisted_cam_config, settings
 from app.models import ReservationItem, SlotState, StatePayload
+from app.mqtt.bridge import fetch_phone_cam_frames
 
 router = APIRouter(prefix="/debug", tags=["Debug"])
 
@@ -271,16 +272,77 @@ class CamTestCaptureRequest(BaseModel):
 
 @router.get("/cam-status")
 def get_cam_test_status(request: Request) -> Dict[str, Any]:
-    """Lấy trạng thái kết nối ESP32-CAM, MQTT và AI Pipeline cho trang Web Test Cam."""
+    """Lấy trạng thái kết nối ESP32-CAM, Camera Điện Thoại, MQTT và AI Pipeline."""
     cache = request.app.state.cache
     mqtt = getattr(request.app.state, "mqtt", None)
     ai_pipeline = getattr(request.app.state, "ai_pipeline", None)
     snap = cache.snapshot()
+
+    phone_cam_online = False
+    if settings.PHONE_CAM_URL:
+        frames = fetch_phone_cam_frames(url=settings.PHONE_CAM_URL, num_frames=1, timeout_s=0.8)
+        phone_cam_online = len(frames) > 0
+
     return {
         "camOnline": snap.get("camOnline", False),
         "mqttConnected": bool(mqtt and getattr(mqtt, "_connected", False)),
         "aiReady": ai_pipeline is not None,
+        "camSource": settings.CAM_SOURCE,
+        "phoneCamUrl": settings.PHONE_CAM_URL,
+        "phoneCamOnline": phone_cam_online,
     }
+
+
+class PhoneCamConfigRequest(BaseModel):
+    camSource: str = Field("phone", description="Nguồn camera mặc định cho cổng: 'phone' hoặc 'esp32cam'")
+    phoneCamUrl: str = Field("", description="IP hoặc URL của app IP Webcam (vd: 192.168.1.15:8080)")
+
+
+@router.post("/phone-cam-config")
+def update_phone_cam_config(body: PhoneCamConfigRequest) -> Dict[str, Any]:
+    """Lưu cấu hình nguồn camera (Điện thoại / ESP32-CAM) và URL IP Webcam."""
+    source = body.camSource.strip().lower()
+    if source not in ("phone", "esp32cam"):
+        raise HTTPException(status_code=400, detail="camSource phải là 'phone' hoặc 'esp32cam'")
+
+    normalized_url = normalize_phone_cam_url(body.phoneCamUrl)
+    settings.CAM_SOURCE = source
+    settings.PHONE_CAM_URL = normalized_url
+    save_persisted_cam_config(source, normalized_url)
+
+    return {
+        "status": "success",
+        "camSource": settings.CAM_SOURCE,
+        "phoneCamUrl": settings.PHONE_CAM_URL,
+    }
+
+
+class PhoneCamTestRequest(BaseModel):
+    phoneCamUrl: Optional[str] = Field(None, description="Tùy chọn URL tạm thời nếu chưa lưu")
+
+
+@router.post("/phone-cam-test")
+def test_phone_cam_capture(
+    request: Request,
+    body: PhoneCamTestRequest = PhoneCamTestRequest(),
+) -> Dict[str, Any]:
+    """Chụp thử 1 ảnh từ Camera Điện Thoại (IP Webcam) và chạy qua YOLO + EasyOCR."""
+    ai_pipeline = getattr(request.app.state, "ai_pipeline", None)
+    if not ai_pipeline:
+        raise HTTPException(status_code=503, detail="AI Pipeline chưa sẵn sàng")
+
+    target_url = normalize_phone_cam_url(body.phoneCamUrl) if body.phoneCamUrl else settings.PHONE_CAM_URL
+    if not target_url:
+        raise HTTPException(status_code=400, detail="Chưa nhập địa chỉ IP Webcam của điện thoại")
+
+    frames = fetch_phone_cam_frames(url=target_url, num_frames=1, timeout_s=3.0)
+    if not frames:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Không thể kết nối tới Camera điện thoại ({target_url}). Hãy chắc chắn app IP Webcam đã bấm Start Server và cùng Wi-Fi.",
+        )
+
+    return _run_yolo_and_visualize(ai_pipeline, frames)
 
 
 @router.post("/cam-test-capture")

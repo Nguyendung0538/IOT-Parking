@@ -218,24 +218,48 @@
     <header>
       <h1>📷 ESP32-CAM &amp; YOLO Plate Test</h1>
       <div class="status-group">
+        <span class="badge"><span id="dotSource" class="dot ok"></span> Cam Cổng: <strong id="txtSource">Điện thoại</strong></span>
         <span class="badge"><span id="dotCam" class="dot"></span> ESP32-CAM: <strong id="txtCam">Đang kiểm tra...</strong></span>
         <span class="badge"><span id="dotMqtt" class="dot"></span> MQTT: <strong id="txtMqtt">...</strong></span>
         <span class="badge"><span id="dotAi" class="dot"></span> YOLO AI: <strong id="txtAi">...</strong></span>
       </div>
     </header>
 
-    <div class="controls">
-      <div class="cam-actions">
-        <button id="btnCaptureCam" class="btn btn-primary">📸 Chụp từ ESP32-CAM</button>
-        <label class="toggle">
-          <input type="checkbox" id="chkFlash" />
-          <span>Bật đèn Flash LED</span>
-        </label>
+    <div class="controls" style="flex-direction: column; align-items: stretch;">
+      <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border);">
+        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; flex: 1;">
+          <strong style="font-size: 0.92rem;">📱 Camera Điện Thoại (IP Webcam):</strong>
+          <input
+            type="text"
+            id="phoneUrlInput"
+            placeholder="Nhập IP điện thoại, VD: 192.168.1.15:8080"
+            style="background: #0f172a; border: 1px solid var(--border); color: var(--text); padding: 9px 12px; border-radius: 8px; min-width: 260px; flex: 1; max-width: 340px;"
+          />
+          <select
+            id="camSourceSelect"
+            style="background: #0f172a; border: 1px solid var(--border); color: var(--text); padding: 9px 12px; border-radius: 8px;"
+          >
+            <option value="phone">Mặc định: Cam Điện thoại</option>
+            <option value="esp32cam">Mặc định: ESP32-CAM</option>
+          </select>
+          <button id="btnSavePhoneCfg" class="btn btn-secondary">💾 Lưu cấu hình</button>
+        </div>
+        <button id="btnCapturePhone" class="btn btn-primary">📱 Chụp thử từ Điện thoại</button>
       </div>
 
-      <div id="dropZone" class="upload-zone">
-        📁 Hoặc kéo thả / chọn ảnh từ máy để test YOLO
-        <input type="file" id="fileInput" accept="image/*" hidden />
+      <div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;">
+        <div class="cam-actions">
+          <button id="btnCaptureCam" class="btn btn-secondary">📸 Chụp từ ESP32-CAM</button>
+          <label class="toggle">
+            <input type="checkbox" id="chkFlash" />
+            <span>Bật đèn Flash LED (ESP32)</span>
+          </label>
+        </div>
+
+        <div id="dropZone" class="upload-zone">
+          📁 Hoặc kéo thả / chọn ảnh từ máy để test YOLO
+          <input type="file" id="fileInput" accept="image/*" hidden />
+        </div>
       </div>
     </div>
 
@@ -282,12 +306,17 @@
 
   <script>
     const btnCaptureCam = document.getElementById("btnCaptureCam");
+    const btnCapturePhone = document.getElementById("btnCapturePhone");
+    const btnSavePhoneCfg = document.getElementById("btnSavePhoneCfg");
+    const phoneUrlInput = document.getElementById("phoneUrlInput");
+    const camSourceSelect = document.getElementById("camSourceSelect");
     const chkFlash = document.getElementById("chkFlash");
     const dropZone = document.getElementById("dropZone");
     const fileInput = document.getElementById("fileInput");
     const alertBox = document.getElementById("alertBox");
 
     const historyList = [];
+    let configInitialized = false;
 
     function showAlert(msg, type = "info") {
       alertBox.textContent = msg;
@@ -312,6 +341,15 @@
 
         document.getElementById("dotAi").className = "dot " + (data.aiReady ? "ok" : "err");
         document.getElementById("txtAi").textContent = data.aiReady ? "Ready" : "Not Ready";
+
+        document.getElementById("txtSource").textContent =
+          data.camSource === "phone" ? "Điện thoại" : "ESP32-CAM";
+
+        if (!configInitialized) {
+          if (data.phoneCamUrl) phoneUrlInput.value = data.phoneCamUrl;
+          if (data.camSource) camSourceSelect.value = data.camSource;
+          configInitialized = true;
+        }
       } catch (e) {
         document.getElementById("dotCam").className = "dot err";
         document.getElementById("txtCam").textContent = "Server Off";
@@ -382,6 +420,60 @@
         strip.appendChild(div);
       });
     }
+
+    btnSavePhoneCfg.addEventListener("click", async () => {
+      hideAlert();
+      btnSavePhoneCfg.disabled = true;
+      try {
+        const res = await fetch("/debug/phone-cam-config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            camSource: camSourceSelect.value,
+            phoneCamUrl: phoneUrlInput.value,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showAlert(data.detail || "Lỗi lưu cấu hình", "error");
+        } else {
+          phoneUrlInput.value = data.phoneCamUrl;
+          showAlert(
+            `Đã lưu! Nguồn mặc định khi xe qua cổng: ${data.camSource === "phone" ? "Camera Điện thoại" : "ESP32-CAM"}`,
+            "info"
+          );
+          refreshStatus();
+        }
+      } catch (err) {
+        showAlert("Lỗi kết nối server: " + err.message, "error");
+      } finally {
+        btnSavePhoneCfg.disabled = false;
+      }
+    });
+
+    btnCapturePhone.addEventListener("click", async () => {
+      hideAlert();
+      btnCapturePhone.disabled = true;
+      btnCapturePhone.textContent = "⏳ Đang chụp từ điện thoại...";
+      try {
+        const res = await fetch("/debug/phone-cam-test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ phoneCamUrl: phoneUrlInput.value }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          showAlert(data.detail || "Lỗi chụp ảnh từ điện thoại", "error");
+        } else {
+          renderResult(data, true);
+        }
+      } catch (err) {
+        showAlert("Lỗi kết nối tới Edge Server: " + err.message, "error");
+      } finally {
+        btnCapturePhone.disabled = false;
+        btnCapturePhone.textContent = "📱 Chụp thử từ Điện thoại";
+      }
+    });
 
     btnCaptureCam.addEventListener("click", async () => {
       hideAlert();

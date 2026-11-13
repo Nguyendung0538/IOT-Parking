@@ -293,6 +293,14 @@ void GateController::handleBackendCommand(uint32_t seq, bool allowOpen, const ch
         return;
     }
 
+    // 1b. Lệnh đóng barie thủ công từ Web Admin (seq == 0 && allowOpen == false)
+    if (seq == 0 && !allowOpen) {
+        closeBarrier();
+        changeState(GATE_STATE_IDLE);
+        Serial.println(F("[GateController] Nhận lệnh ADMIN: Đóng Barie ngay lập tức!"));
+        return;
+    }
+
     // 2. Xử lý xe vào: Đang ở GATE_STATE_WAIT_AUTH_IN
     if (currentState == GATE_STATE_WAIT_AUTH_IN && seq == currentSeq) {
         if (plate && plate[0] != '\0') {
