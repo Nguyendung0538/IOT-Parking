@@ -247,7 +247,7 @@ def test_st03_protect_reserved_slot_when_full(integration_env):
 # ==============================================================================
 def test_st04_cam_failure_server_timeout(integration_env, monkeypatch):
     """ST-04: Nhận gate/request từ ESP32 nhưng CAM bị tắt (không có HTTP POST).
-    Sau timeout, Server tự động mở barie ở chế độ unrecognized kèm cờ camera_timeout.
+    Sau timeout, Server chuyển trạng thái WAIT_MANUAL (pending_manual) để Web Admin xử lý.
     """
     arbiter = integration_env["arbiter"]
     mock_mqtt = integration_env["mqtt"]
@@ -264,13 +264,14 @@ def test_st04_cam_failure_server_timeout(integration_env, monkeypatch):
     mock_mqtt.publish_gate_command.assert_called_once()
     mqtt_args = mock_mqtt.publish_gate_command.call_args[1]
     assert mqtt_args["seq"] == 4
-    assert mqtt_args["action"] == "OPEN"
+    assert mqtt_args["action"] == "WAIT_MANUAL"
     assert mqtt_args["plate"] == "KHONG RO"
-    assert mqtt_args["assigned_slot"] == "A1"
+    assert mqtt_args["assigned_slot"] == ""
 
     time.sleep(0.1)
     ev = dummy_cloud.fallback_events[-1]
     assert ev["seq"] == 4
+    assert ev["status"] == "pending_manual"
     assert "camera_timeout" in ev["flags"]
     assert "unrecognized" in ev["flags"]
 

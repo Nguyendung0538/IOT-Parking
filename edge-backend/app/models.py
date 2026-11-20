@@ -27,7 +27,11 @@ class StatePayload(BaseModel):
     freeSlots: int = 0
     totalSlots: int = 4
     barrierOpen: bool = False
+    barrierInOpen: Optional[bool] = None
+    barrierOutOpen: Optional[bool] = None
     gateState: str = "IDLE"
+    gateInState: Optional[str] = None
+    gateOutState: Optional[str] = None
     slots: Dict[str, SlotState] = Field(default_factory=dict)
     summary: Optional[Dict[str, Any]] = None
 
@@ -50,7 +54,8 @@ class GateCommandPayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     seq: int
-    action: str  # "OPEN" | "DENY"
+    action: str  # "OPEN" | "CLOSE" | "DENY"
+    direction: Optional[str] = None  # "IN" | "OUT"
     plate: str = ""
     assignedSlot: str = ""
     reason: Optional[str] = None
@@ -69,6 +74,12 @@ class ReservedMaskPayload(BaseModel):
 class ReservationItem(BaseModel):
     id: str
     slotId: str
+    plate: str
+    expiresAt: datetime
+
+
+class ExitRequestItem(BaseModel):
+    sessionId: str
     plate: str
     expiresAt: datetime
 

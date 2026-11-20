@@ -136,6 +136,7 @@ class GateArbiter:
             self.mqtt.publish_gate_command(
                 seq=decision.seq,
                 action=decision.action,
+                direction=decision.direction,
                 plate=decision.plate_for_lcd,
                 assigned_slot=decision.assigned_slot,
                 reason=decision.deny_reason,
@@ -245,9 +246,21 @@ class GateArbiter:
         # 2. XỬ LÝ CHIỀU XE RA (OUT)
         if direction == "OUT":
             if is_valid:
-                status = "ok"
+                self.cache.purge_expired_exit_requests()
+                if settings.REQUIRE_EXIT_REQUEST and not self.cache.has_active_exit_request_for_plate(plate_normalized):
+                    if "no_exit_request" not in flags:
+                        flags.append("no_exit_request")
+                    return_action = "DENY"
+                    status = "denied_no_exit_request"
+                    deny_reason = "NO_EXIT_REQUEST"
+                else:
+                    return_action = "OPEN"
+                    status = "ok"
+                    deny_reason = None
             else:
-                status = "unrecognized"
+                return_action = "WAIT_MANUAL"
+                status = "pending_manual"
+                deny_reason = "UNRECOGNIZED_PLATE"
                 if "unrecognized" not in flags:
                     flags.append("unrecognized")
                 if "exit_manual_reconcile" not in flags:
@@ -256,11 +269,11 @@ class GateArbiter:
             decision = ArbiterDecision(
                 seq=seq,
                 direction="OUT",
-                action="OPEN",
+                action=return_action,
                 status=status,
                 assigned_slot="",
                 matched_reservation_id=None,
-                deny_reason=None,
+                deny_reason=deny_reason,
                 flags=flags,
                 plate_raw=plate_raw,
                 plate_normalized=plate_normalized,
@@ -370,30 +383,44 @@ class GateArbiter:
                 break
 
         if free_slot is not None:
-            # Còn ô trống -> Mở cổng
             if is_valid:
-                status = "ok"
+                # Còn ô trống và nhận diện được biển -> Mở cổng vào
+                decision = ArbiterDecision(
+                    seq=seq,
+                    direction="IN",
+                    action="OPEN",
+                    status="ok",
+                    assigned_slot=free_slot if settings.ASSIGN_SLOT_ON_ENTRY else "",
+                    matched_reservation_id=None,
+                    deny_reason=None,
+                    flags=flags,
+                    plate_raw=plate_raw,
+                    plate_normalized=plate_normalized,
+                    plate_display=plate_display,
+                    plate_for_lcd=plate_for_lcd,
+                    confidence=confidence,
+                    is_duplicate=False,
+                )
             else:
-                status = "unrecognized"
+                # Không đọc được biển -> Giữ barie đóng và chờ Admin nhập biển trên Web
                 if "unrecognized" not in flags:
                     flags.append("unrecognized")
-
-            decision = ArbiterDecision(
-                seq=seq,
-                direction="IN",
-                action="OPEN",
-                status=status,
-                assigned_slot=free_slot if settings.ASSIGN_SLOT_ON_ENTRY else "",
-                matched_reservation_id=None,
-                deny_reason=None,
-                flags=flags,
-                plate_raw=plate_raw,
-                plate_normalized=plate_normalized,
-                plate_display=plate_display,
-                plate_for_lcd=plate_for_lcd,
-                confidence=confidence,
-                is_duplicate=False,
-            )
+                decision = ArbiterDecision(
+                    seq=seq,
+                    direction="IN",
+                    action="WAIT_MANUAL",
+                    status="pending_manual",
+                    assigned_slot="",
+                    matched_reservation_id=None,
+                    deny_reason="UNRECOGNIZED_PLATE",
+                    flags=flags,
+                    plate_raw=plate_raw,
+                    plate_normalized=plate_normalized,
+                    plate_display=plate_display,
+                    plate_for_lcd=plate_for_lcd,
+                    confidence=confidence,
+                    is_duplicate=False,
+                )
         else:
             # Hết ô trống -> Từ chối
             flags.append("lot_full")

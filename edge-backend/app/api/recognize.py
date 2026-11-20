@@ -109,6 +109,7 @@ async def recognize_plate_and_open_gate(
         mqtt_bridge.publish_gate_command(
             seq=decision.seq,
             action=decision.action,
+            direction=decision.direction,
             plate=decision.plate_for_lcd,
             assigned_slot=decision.assigned_slot,
             reason=decision.deny_reason,

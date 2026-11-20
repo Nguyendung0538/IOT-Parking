@@ -26,15 +26,23 @@
 #define OLED_USE_SH1106
 // #define OLED_USE_SSD1306
 
-// Barie Cổng (Micro Servo SG90)
-#define PIN_SERVO_GATE 18
+// Barie 2 Cổng Độc Lập (2x Micro Servo SG90)
+#define PIN_SERVO_GATE_IN  18   // Servo Barie Cổng VÀO
+#define PIN_SERVO_GATE_OUT 19   // Servo Barie Cổng RA
+#define PIN_SERVO_GATE     PIN_SERVO_GATE_IN // Alias tương thích ngược
 #define SERVO_ANGLE_CLOSED 0    // Độ khi barie hạ
 #define SERVO_ANGLE_OPEN   90   // Độ khi barie nâng
 
-// Cảm biến hồng ngoại cổng vào/ra (LM393, Active LOW)
+// Cảm biến hồng ngoại Cổng VÀO (LM393, Active LOW)
 // Lưu ý: GPIO 34, 35 chỉ hỗ trợ Input thuần (không có pullup nội)
-#define PIN_SENSOR_GATE_OUT 34  // Cảm biến phía ngoài bãi (S_OUT)
-#define PIN_SENSOR_GATE_IN  35  // Cảm biến phía trong bãi (S_IN)
+#define PIN_SENSOR_ENTRY_OUT 34 // Cảm biến ngoài bãi tại Cổng VÀO
+#define PIN_SENSOR_ENTRY_IN  35 // Cảm biến trong bãi tại Cổng VÀO
+#define PIN_SENSOR_GATE_OUT  PIN_SENSOR_ENTRY_OUT
+#define PIN_SENSOR_GATE_IN   PIN_SENSOR_ENTRY_IN
+
+// Cảm biến hồng ngoại Cổng RA (LM393, Active LOW)
+#define PIN_SENSOR_EXIT_IN   32 // Cảm biến trong bãi tại Cổng RA
+#define PIN_SENSOR_EXIT_OUT  33 // Cảm biến ngoài bãi tại Cổng RA
 
 // Cảm biến hồng ngoại 4 ô đỗ xe (LM393, Active LOW)
 #define NUM_SLOTS      4

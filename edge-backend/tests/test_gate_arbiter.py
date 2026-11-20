@@ -222,7 +222,7 @@ def test_s5_t6_lot_full_for_guest(arbiter, test_cache):
 
 
 def test_s5_t7_unrecognized_plate_with_free_slots(arbiter, test_cache):
-    """S5-T7: Không đọc được biển số (unrecognized) nhưng bãi còn chỗ -> OPEN kèm cờ unrecognized."""
+    """S5-T7: Không đọc được biển số (unrecognized) nhưng bãi còn chỗ -> WAIT_MANUAL chờ Web Admin nhập biển."""
     # Ô A1, A2 bị chiếm, B1 còn trống
     test_cache.apply_state(
         StatePayload(
@@ -242,16 +242,42 @@ def test_s5_t7_unrecognized_plate_with_free_slots(arbiter, test_cache):
         confidence=0.0,
         is_valid=False,
     )
-    assert dec.action == "OPEN"
-    assert dec.assigned_slot == "B1"
-    assert dec.status == "unrecognized"
+    assert dec.action == "WAIT_MANUAL"
+    assert dec.assigned_slot == ""
+    assert dec.status == "pending_manual"
+    assert dec.deny_reason == "UNRECOGNIZED_PLATE"
     assert "unrecognized" in dec.flags
     assert dec.plate_for_lcd == "KHONG RO"
 
 
-def test_s5_t8_direction_out(arbiter):
-    """S5-T8: Chiều xe ra (OUT) -> Luôn OPEN."""
-    # Ra có biển số rõ
+def test_s5_t8_direction_out(arbiter, test_cache):
+    """S5-T8: Chiều xe ra (OUT) -> Có yêu cầu ra từ App thì OPEN; chưa gửi yêu cầu ra thì DENY; không đọc được biển thì WAIT_MANUAL."""
+    now = datetime.now(timezone.utc)
+    from app.models import ExitRequestItem
+
+    # 1. Ra có biển số rõ nhưng CHƯA gửi yêu cầu ra trên App -> DENY
+    dec_denied = arbiter.decide(
+        seq=80,
+        direction="OUT",
+        plate_raw="61F22261",
+        plate_normalized="61F22261",
+        plate_display="61F-222.61",
+        confidence=0.91,
+        is_valid=True,
+    )
+    assert dec_denied.action == "DENY"
+    assert dec_denied.status == "denied_no_exit_request"
+    assert dec_denied.deny_reason == "NO_EXIT_REQUEST"
+    assert "no_exit_request" in dec_denied.flags
+
+    # 2. Sau khi App gửi yêu cầu ra còn hạn -> OPEN
+    test_cache.upsert_exit_request(
+        ExitRequestItem(
+            sessionId="sess_out_1",
+            plate="61F22261",
+            expiresAt=now + timedelta(minutes=5),
+        )
+    )
     dec1 = arbiter.decide(
         seq=8,
         direction="OUT",
@@ -265,7 +291,7 @@ def test_s5_t8_direction_out(arbiter):
     assert dec1.assigned_slot == ""
     assert dec1.status == "ok"
 
-    # Ra không đọc được biển
+    # 3. Ra không đọc được biển -> chờ admin chọn xe trên Web
     dec2 = arbiter.decide(
         seq=9,
         direction="OUT",
@@ -275,13 +301,14 @@ def test_s5_t8_direction_out(arbiter):
         confidence=0.0,
         is_valid=False,
     )
-    assert dec2.action == "OPEN"
-    assert dec2.status == "unrecognized"
+    assert dec2.action == "WAIT_MANUAL"
+    assert dec2.status == "pending_manual"
+    assert dec2.deny_reason == "UNRECOGNIZED_PLATE"
     assert "exit_manual_reconcile" in dec2.flags
 
 
 def test_s5_t9_camera_timeout_failsafe(arbiter, test_mqtt, monkeypatch):
-    """S5-T9: Khi nhận gate/request nhưng CAM không gọi /recognize -> Sau timeout tự động mở cổng."""
+    """S5-T9: Khi nhận gate/request nhưng CAM không gọi /recognize -> Sau timeout chuyển WAIT_MANUAL chờ Web duyệt."""
     # Giảm timeout xuống 0.1s để test nhanh không bị chờ 5s
     monkeypatch.setattr(settings, "CAMERA_TIMEOUT_S", 0.1)
 
@@ -291,12 +318,12 @@ def test_s5_t9_camera_timeout_failsafe(arbiter, test_mqtt, monkeypatch):
     # Chờ 0.2s để timer kích hoạt
     time.sleep(0.2)
 
-    # Đảm bảo lệnh mở cổng đã được publish qua MQTT
+    # Đảm bảo lệnh WAIT_MANUAL đã được publish qua MQTT (giữ barie đóng chờ Admin)
     test_mqtt.publish_gate_command.assert_called_once()
     call_args = test_mqtt.publish_gate_command.call_args[1]
     assert call_args["seq"] == 99
-    assert call_args["action"] == "OPEN"
-    assert call_args["assigned_slot"] == "A1"
+    assert call_args["action"] == "WAIT_MANUAL"
+    assert call_args["assigned_slot"] == ""
     assert call_args["plate"] == "KHONG RO"
 
 

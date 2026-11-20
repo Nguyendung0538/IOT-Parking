@@ -48,6 +48,8 @@ private:
     bool prevOccupied[NUM_SLOTS];
     bool prevReserved[NUM_SLOTS];
     bool prevBarrierOpen;
+    bool prevBarrierInOpen;
+    bool prevBarrierOutOpen;
 
     // Hàng đợi lưu các sự kiện Offline Fallback khi mất mạng
     static const uint8_t OFFLINE_QUEUE_CAPACITY = 8;

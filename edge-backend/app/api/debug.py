@@ -7,6 +7,7 @@ hoặc khi chạy ở chế độ mô phỏng / ngắt kết nối Firebase.
 import asyncio
 import base64
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional
 
@@ -319,6 +320,127 @@ def update_phone_cam_config(body: PhoneCamConfigRequest) -> Dict[str, Any]:
 
 class PhoneCamTestRequest(BaseModel):
     phoneCamUrl: Optional[str] = Field(None, description="Tùy chọn URL tạm thời nếu chưa lưu")
+
+
+class RecaptureGateRequest(BaseModel):
+    gateEventId: Optional[str] = Field(None, description="ID sự kiện gateEvents đang chờ duyệt")
+    direction: str = Field("IN", description="Hướng cổng: IN hoặc OUT")
+    phoneCamUrl: Optional[str] = Field(None, description="Tùy chọn IP Camera")
+
+
+@router.post("/recapture-gate")
+def recapture_gate_image(
+    request: Request,
+    body: RecaptureGateRequest = RecaptureGateRequest(),
+) -> Dict[str, Any]:
+    """Chụp lại ảnh mới từ Camera IP khi OCR lần đầu không đọc được biển số."""
+    ai_pipeline = getattr(request.app.state, "ai_pipeline", None)
+    if not ai_pipeline:
+        raise HTTPException(status_code=503, detail="AI Pipeline chưa sẵn sàng")
+
+    target_url = normalize_phone_cam_url(body.phoneCamUrl) if body.phoneCamUrl else settings.PHONE_CAM_URL
+    if not target_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Chưa cấu hình địa chỉ IP Camera (vào tab Thiết bị hoặc /cam-test để nhập IP).",
+        )
+
+    frames = fetch_phone_cam_frames(
+        url=target_url,
+        num_frames=max(2, settings.PHONE_CAM_FRAMES),
+        interval_ms=settings.PHONE_CAM_INTERVAL_MS,
+        timeout_s=3.0,
+    )
+    if not frames:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Không thể kết nối Camera IP ({target_url}). Hãy kiểm tra app IP Webcam & Wi-Fi.",
+        )
+
+    res = ai_pipeline.recognize_frames(frames)
+    best_idx = res.best_frame_index if 0 <= res.best_frame_index < len(frames) else 0
+    full_jpeg_bytes = frames[best_idx]
+    crop_jpeg_bytes = res.crop_jpeg_bytes
+
+    # Nếu YOLO cắt được vùng biển số dù OCR chưa đọc ra chữ, vẫn lưu ảnh crop để admin dễ nhìn
+    if not crop_jpeg_bytes and full_jpeg_bytes:
+        nparr = np.frombuffer(full_jpeg_bytes, np.uint8)
+        img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img_bgr is not None and img_bgr.size > 0:
+            detected = ai_pipeline.detector.detect_and_crop(img_bgr)
+            if detected:
+                _, crop_buf = cv2.imencode(".jpg", detected[0].crop_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                if crop_buf is not None:
+                    crop_jpeg_bytes = crop_buf.tobytes()
+
+    now = datetime.now()
+    date_str = now.strftime("%Y-%m-%d")
+    dir_norm = (body.direction or "IN").upper().strip()
+    prefix = f"recapture_{dir_norm}_{int(now.timestamp() * 1000)}"
+
+    local_base_dir = Path(settings.LOCAL_CAPTURE_DIR)
+    if not local_base_dir.is_absolute():
+        local_base_dir = Path(__file__).resolve().parent.parent.parent / settings.LOCAL_CAPTURE_DIR
+    day_dir = local_base_dir / date_str
+    day_dir.mkdir(parents=True, exist_ok=True)
+
+    base_http_url = f"http://127.0.0.1:{settings.API_PORT}"
+    image_url: Optional[str] = None
+    crop_image_url: Optional[str] = None
+
+    if full_jpeg_bytes:
+        with open(day_dir / f"{prefix}_full.jpg", "wb") as f:
+            f.write(full_jpeg_bytes)
+        image_url = f"{base_http_url}/captures/{date_str}/{prefix}_full.jpg"
+
+    if crop_jpeg_bytes:
+        with open(day_dir / f"{prefix}_crop.jpg", "wb") as f:
+            f.write(crop_jpeg_bytes)
+        crop_image_url = f"{base_http_url}/captures/{date_str}/{prefix}_crop.jpg"
+
+    # Upload lên Firebase Storage nếu được cấu hình
+    import firebase_admin
+    if settings.FIREBASE_ENABLED and settings.FIREBASE_STORAGE_BUCKET and firebase_admin._apps:
+        try:
+            from firebase_admin import storage
+            bucket = storage.bucket(settings.FIREBASE_STORAGE_BUCKET)
+            if full_jpeg_bytes:
+                blob = bucket.blob(f"gate/{date_str}/{prefix}_full.jpg")
+                blob.upload_from_string(full_jpeg_bytes, content_type="image/jpeg")
+                image_url = blob.public_url
+            if crop_jpeg_bytes:
+                blob = bucket.blob(f"gate/{date_str}/{prefix}_crop.jpg")
+                blob.upload_from_string(crop_jpeg_bytes, content_type="image/jpeg")
+                crop_image_url = blob.public_url
+        except Exception:
+            pass
+
+    # Cập nhật ảnh chụp mới lên document gateEvents nếu có ID (không đổi status để admin vẫn xác nhận)
+    cloud = getattr(request.app.state, "cloud", None)
+    db = getattr(cloud, "db", None)
+    if body.gateEventId and db:
+        try:
+            update_payload: Dict[str, Any] = {}
+            if image_url:
+                update_payload["imageUrl"] = image_url
+            if crop_image_url:
+                update_payload["cropImageUrl"] = crop_image_url
+            if update_payload:
+                db.collection("gateEvents").document(body.gateEventId).set(update_payload, merge=True)
+        except Exception:
+            pass
+
+    return {
+        "status": "success",
+        "imageUrl": image_url,
+        "cropImageUrl": crop_image_url,
+        "plateRaw": res.plate_raw,
+        "plateNormalized": res.plate_normalized,
+        "plateDisplay": res.plate_display,
+        "confidence": res.confidence,
+        "isValid": res.is_valid,
+        "latencyMs": res.latency_ms,
+    }
 
 
 @router.post("/phone-cam-test")

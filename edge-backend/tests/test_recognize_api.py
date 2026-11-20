@@ -102,7 +102,18 @@ def test_recognize_duplicate_idempotency(client, mock_mqtt):
 
 
 def test_recognize_direction_out(client, mock_mqtt):
-    """Chiều xe ra (OUT) -> Luôn OPEN, assignedSlot rỗng."""
+    """Chiều xe ra (OUT) -> Cần có yêu cầu ra còn hạn mới OPEN, assignedSlot rỗng."""
+    from datetime import datetime, timedelta, timezone
+    from app.models import ExitRequestItem
+
+    client.app.state.cache.upsert_exit_request(
+        ExitRequestItem(
+            sessionId="sess_rec_out",
+            plate="51A12345",
+            expiresAt=datetime.now(timezone.utc) + timedelta(minutes=5),
+        )
+    )
+
     jpeg_data = _create_dummy_jpeg()
     files = [("images", ("frame_0.jpg", jpeg_data, "image/jpeg"))]
     data = {"device_id": "ESP32_CAM_01", "seq": "106", "direction": "OUT"}

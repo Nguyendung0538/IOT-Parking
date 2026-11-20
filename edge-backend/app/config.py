@@ -79,8 +79,9 @@ class Settings(BaseSettings):
     PHONE_CAM_MAX_ATTEMPTS: int = 5     # Số lần chụp thử tối đa nếu OCR chưa đọc được biển
     PHONE_CAM_RETRY_DELAY_MS: int = 250 # Thời gian chờ giữa các lần chụp lại (ms)
 
-    # 8. Điều khiển gán ô khi xe vào
+    # 8. Điều khiển gán ô & yêu cầu ra bãi
     ASSIGN_SLOT_ON_ENTRY: bool = False  # Tạm thời tắt gán ô cố định khi xe vào cổng
+    REQUIRE_EXIT_REQUEST: bool = True   # Xe ra bắt buộc phải có yêu cầu ra còn hạn từ App Android
 
     # Generated Topic Properties (Không hardcode chuỗi rải rác)
     @property

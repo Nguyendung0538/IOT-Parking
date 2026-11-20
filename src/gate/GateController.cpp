@@ -2,73 +2,133 @@
 
 #define GATE_SENSOR_DEBOUNCE_MS 80
 
+static bool isDirectionOut(const char* direction) {
+    if (!direction) return false;
+    return (strcmp(direction, "OUT") == 0 || strcmp(direction, "out") == 0);
+}
+
 GateController::GateController()
-    : currentState(GATE_STATE_IDLE),
+    : entryState(GATE_IN_IDLE),
+      exitState(GATE_OUT_IDLE),
       lastEvent(GATE_EVENT_NONE),
-      barrierOpen(false),
-      barrierOpenTimestamp(0),
+      barrierInOpen(false),
+      barrierOutOpen(false),
+      barrierInOpenTimestamp(0),
+      barrierOutOpenTimestamp(0),
       flagJustEntered(false),
       flagJustExited(false),
-      currentSeq(0),
-      pendingAuthPublish(false),
-      pendingAuthEntering(false),
-      authWaitTimestamp(0),
-      pendingOfflineFallbackLog(false),
-      fallbackSeq(0),
-      fallbackEntering(false),
-      rawSensorOut(false),
-      confirmedSensorOut(false),
-      lastDebounceTimeOut(0),
-      rawSensorIn(false),
-      confirmedSensorIn(false),
-      lastDebounceTimeIn(0) {
+      nextSeq(0),
+      seqIn(0),
+      seqOut(0),
+      pendingInAuthPublish(false),
+      inAuthWaitTimestamp(0),
+      pendingInOfflineFallback(false),
+      fallbackInSeq(0),
+      pendingOutAuthPublish(false),
+      outAuthWaitTimestamp(0),
+      pendingOutOfflineFallback(false),
+      fallbackOutSeq(0),
+      rawEntryOut(false),
+      confirmedEntryOut(false),
+      lastDebounceEntryOut(0),
+      rawEntryIn(false),
+      confirmedEntryIn(false),
+      lastDebounceEntryIn(0),
+      rawExitIn(false),
+      confirmedExitIn(false),
+      lastDebounceExitIn(0),
+      rawExitOut(false),
+      confirmedExitOut(false),
+      lastDebounceExitOut(0) {
     activePlate[0] = '\0';
     assignedSlot[0] = '\0';
 }
 
 void GateController::begin() {
-    // GPIO 34, 35 là GPI only (chỉ đọc input thuần, không pullup nội)
-    pinMode(PIN_SENSOR_GATE_OUT, INPUT);
-    pinMode(PIN_SENSOR_GATE_IN, INPUT);
+    // Cổng VÀO: GPIO 34, 35 là input-only (không có pullup nội)
+    pinMode(PIN_SENSOR_ENTRY_OUT, INPUT);
+    pinMode(PIN_SENSOR_ENTRY_IN, INPUT);
 
-    // Chuẩn bị servo SG90
+    // Cổng RA: GPIO 32, 33 hỗ trợ INPUT_PULLUP tránh nhiễu khi hở chân
+    pinMode(PIN_SENSOR_EXIT_IN, INPUT_PULLUP);
+    pinMode(PIN_SENSOR_EXIT_OUT, INPUT_PULLUP);
+
+    // Chuẩn bị 2 Servo SG90 trên 2 timer PWM riêng biệt
     ESP32PWM::allocateTimer(0);
-    gateServo.setPeriodHertz(50); // Chuẩn servo 50Hz
-    gateServo.attach(PIN_SERVO_GATE, 500, 2400);
+    ESP32PWM::allocateTimer(1);
 
-    // Mặc định hạ barie
-    closeBarrier();
+    gateServoIn.setPeriodHertz(50);
+    gateServoIn.attach(PIN_SERVO_GATE_IN, 500, 2400);
 
-    // Khởi tạo đọc trạng thái ban đầu của cảm biến
-    rawSensorOut = (digitalRead(PIN_SENSOR_GATE_OUT) == SENSOR_ACTIVE_LEVEL);
-    confirmedSensorOut = rawSensorOut;
-    rawSensorIn = (digitalRead(PIN_SENSOR_GATE_IN) == SENSOR_ACTIVE_LEVEL);
-    confirmedSensorIn = rawSensorIn;
+    gateServoOut.setPeriodHertz(50);
+    gateServoOut.attach(PIN_SERVO_GATE_OUT, 500, 2400);
 
-    Serial.println(F("[GateController] Initialized gate sensors & SG90 servo (Active-LOW, FSM ready)."));
+    // Mặc định hạ cả 2 barie
+    closeEntryBarrier();
+    closeExitBarrier();
+
+    // Đọc trạng thái ban đầu của 4 cảm biến cổng
+    unsigned long now = millis();
+    rawEntryOut = (digitalRead(PIN_SENSOR_ENTRY_OUT) == SENSOR_ACTIVE_LEVEL);
+    confirmedEntryOut = rawEntryOut;
+    lastDebounceEntryOut = now;
+
+    rawEntryIn = (digitalRead(PIN_SENSOR_ENTRY_IN) == SENSOR_ACTIVE_LEVEL);
+    confirmedEntryIn = rawEntryIn;
+    lastDebounceEntryIn = now;
+
+    rawExitIn = (digitalRead(PIN_SENSOR_EXIT_IN) == SENSOR_ACTIVE_LEVEL);
+    confirmedExitIn = rawExitIn;
+    lastDebounceExitIn = now;
+
+    rawExitOut = (digitalRead(PIN_SENSOR_EXIT_OUT) == SENSOR_ACTIVE_LEVEL);
+    confirmedExitOut = rawExitOut;
+    lastDebounceExitOut = now;
+
+    Serial.println(F("[GateController] Initialized Dual Gates (IN: 34/35 + GPIO18, OUT: 32/33 + GPIO19)."));
 }
 
 void GateController::updateSensors() {
     unsigned long now = millis();
 
-    // Debounce cảm biến cổng ngoài (S_OUT - GPIO 34)
-    bool readingOut = (digitalRead(PIN_SENSOR_GATE_OUT) == SENSOR_ACTIVE_LEVEL);
-    if (readingOut != rawSensorOut) {
-        rawSensorOut = readingOut;
-        lastDebounceTimeOut = now;
+    // 1. Cổng VÀO - ngoài bãi (GPIO 34)
+    bool readEntryOut = (digitalRead(PIN_SENSOR_ENTRY_OUT) == SENSOR_ACTIVE_LEVEL);
+    if (readEntryOut != rawEntryOut) {
+        rawEntryOut = readEntryOut;
+        lastDebounceEntryOut = now;
     }
-    if ((now - lastDebounceTimeOut) >= GATE_SENSOR_DEBOUNCE_MS) {
-        confirmedSensorOut = rawSensorOut;
+    if ((now - lastDebounceEntryOut) >= GATE_SENSOR_DEBOUNCE_MS) {
+        confirmedEntryOut = rawEntryOut;
     }
 
-    // Debounce cảm biến cổng trong (S_IN - GPIO 35)
-    bool readingIn = (digitalRead(PIN_SENSOR_GATE_IN) == SENSOR_ACTIVE_LEVEL);
-    if (readingIn != rawSensorIn) {
-        rawSensorIn = readingIn;
-        lastDebounceTimeIn = now;
+    // 2. Cổng VÀO - trong bãi (GPIO 35)
+    bool readEntryIn = (digitalRead(PIN_SENSOR_ENTRY_IN) == SENSOR_ACTIVE_LEVEL);
+    if (readEntryIn != rawEntryIn) {
+        rawEntryIn = readEntryIn;
+        lastDebounceEntryIn = now;
     }
-    if ((now - lastDebounceTimeIn) >= GATE_SENSOR_DEBOUNCE_MS) {
-        confirmedSensorIn = rawSensorIn;
+    if ((now - lastDebounceEntryIn) >= GATE_SENSOR_DEBOUNCE_MS) {
+        confirmedEntryIn = rawEntryIn;
+    }
+
+    // 3. Cổng RA - trong bãi (GPIO 32)
+    bool readExitIn = (digitalRead(PIN_SENSOR_EXIT_IN) == SENSOR_ACTIVE_LEVEL);
+    if (readExitIn != rawExitIn) {
+        rawExitIn = readExitIn;
+        lastDebounceExitIn = now;
+    }
+    if ((now - lastDebounceExitIn) >= GATE_SENSOR_DEBOUNCE_MS) {
+        confirmedExitIn = rawExitIn;
+    }
+
+    // 4. Cổng RA - ngoài bãi (GPIO 33)
+    bool readExitOut = (digitalRead(PIN_SENSOR_EXIT_OUT) == SENSOR_ACTIVE_LEVEL);
+    if (readExitOut != rawExitOut) {
+        rawExitOut = readExitOut;
+        lastDebounceExitOut = now;
+    }
+    if ((now - lastDebounceExitOut) >= GATE_SENSOR_DEBOUNCE_MS) {
+        confirmedExitOut = rawExitOut;
     }
 }
 
@@ -76,233 +136,277 @@ void GateController::update(bool parkingFull) {
     updateSensors();
     unsigned long now = millis();
 
-    switch (currentState) {
-        case GATE_STATE_IDLE:
-            // Tự động giải phóng sự kiện timeout khi đã quay về IDLE
-            if (lastEvent == GATE_EVENT_TIMEOUT) {
-                lastEvent = GATE_EVENT_NONE;
-            }
+    updateEntryGate(parkingFull, now);
+    updateExitGate(now);
+}
 
-            if (confirmedSensorOut) {
+void GateController::updateEntryGate(bool parkingFull, unsigned long now) {
+    switch (entryState) {
+        case GATE_IN_IDLE:
+            if (confirmedEntryOut) {
 #if ENABLE_WIFI
-                // Có Wi-Fi: Chuyển sang chờ nhận diện biển số & lệnh mở cổng từ Edge Server
-                currentSeq++;
-                pendingAuthPublish = true;
-                pendingAuthEntering = true;
-                authWaitTimestamp = now;
+                seqIn = ++nextSeq;
+                pendingInAuthPublish = true;
+                inAuthWaitTimestamp = now;
                 lastEvent = GATE_EVENT_WAITING_AUTH;
                 activePlate[0] = '\0';
                 assignedSlot[0] = '\0';
-                changeState(GATE_STATE_WAIT_AUTH_IN);
-                Serial.printf("[GateController] Phat hien xe den cong ngoai -> Cho Edge AI auth (seq=%u)...\n", currentSeq);
+                entryState = GATE_IN_WAIT_AUTH;
+                Serial.printf("[Gate IN] Xe den cong VAO -> Cho Edge AI auth (seq=%u)...\n", seqIn);
 #else
-                // Chế độ Offline cục bộ thuần túy
                 if (parkingFull) {
                     lastEvent = GATE_EVENT_BLOCKED_FULL;
-                    changeState(GATE_STATE_BLOCKED_FULL);
-                    Serial.println(F("[GateController] Tu choi xe vao: Bai do xe da DAY!"));
+                    entryState = GATE_IN_BLOCKED_FULL;
+                    Serial.println(F("[Gate IN] Tu choi xe vao: Bai do xe da DAY!"));
                 } else {
                     strncpy(activePlate, "LOCAL", sizeof(activePlate));
                     assignedSlot[0] = '\0';
-                    openBarrier();
+                    openEntryBarrier();
                     lastEvent = GATE_EVENT_CAR_ENTERING;
-                    changeState(GATE_STATE_ENTERING_WAIT_IN);
-                    Serial.println(F("[GateController] Local Mode: Mo Barie vao (90 deg)."));
+                    entryState = GATE_IN_OPEN_WAIT;
+                    Serial.println(F("[Gate IN] Local Mode: Mo Barie VAO (90 deg)."));
                 }
 #endif
-            } else if (confirmedSensorIn) {
+            }
+            break;
+
+        case GATE_IN_WAIT_AUTH:
+            // Xe lùi ra khỏi cảm biến ngoài trước khi backend trả lời
+            if (!confirmedEntryOut) {
+                pendingInAuthPublish = false;
+                if (lastEvent == GATE_EVENT_WAITING_AUTH && exitState != GATE_OUT_WAIT_AUTH) {
+                    lastEvent = GATE_EVENT_NONE;
+                }
+                entryState = GATE_IN_IDLE;
+                Serial.println(F("[Gate IN] Xe cong VAO da lui di -> Huy cho auth, ve IDLE."));
+                break;
+            }
+
+            // Timeout 8s khi không nhận được phản hồi Edge -> Chuyển chờ Web Admin (không tự ý mở barie)
+            if ((now - inAuthWaitTimestamp) >= GATE_AUTH_TIMEOUT_MS) {
+                Serial.printf("[Gate IN] TIMEOUT 8s khong nhan duoc lenh Edge (seq=%u) -> Giu barie DONG, cho Web duyet!\n", seqIn);
+                lastEvent = GATE_EVENT_MANUAL_REQUIRED;
+                entryState = GATE_IN_WAIT_MANUAL;
+            }
+            break;
+
+        case GATE_IN_WAIT_MANUAL:
+            if (!confirmedEntryOut) {
+                if (lastEvent == GATE_EVENT_MANUAL_REQUIRED) {
+                    lastEvent = GATE_EVENT_NONE;
+                }
+                entryState = GATE_IN_IDLE;
+                Serial.println(F("[Gate IN] Xe cho duyet da lui khoi cong VAO -> Ve IDLE."));
+            }
+            break;
+
+        case GATE_IN_OPEN_WAIT:
+            if ((now - barrierInOpenTimestamp) >= GATE_SAFETY_TIMEOUT_MS) {
+                closeEntryBarrier();
+                lastEvent = GATE_EVENT_TIMEOUT;
+                entryState = GATE_IN_IDLE;
+                Serial.println(F("[Gate IN] Timeout 10s: Xe vao khong qua cong -> Dong barie VAO!"));
+                break;
+            }
+
+            if (confirmedEntryIn) {
+                entryState = GATE_IN_PASSING;
+                Serial.println(F("[Gate IN] Xe dang di qua cong VAO (cham S_ENTRY_IN)..."));
+            }
+            break;
+
+        case GATE_IN_PASSING:
+            if ((now - barrierInOpenTimestamp) >= GATE_SAFETY_TIMEOUT_MS) {
+                closeEntryBarrier();
+                lastEvent = GATE_EVENT_TIMEOUT;
+                entryState = GATE_IN_IDLE;
+                Serial.println(F("[Gate IN] Timeout 10s khi xe qua cong VAO -> Dong barie an toan!"));
+                break;
+            }
+
+            if (!confirmedEntryOut && !confirmedEntryIn) {
+                closeEntryBarrier();
+                flagJustEntered = true;
+                if (lastEvent == GATE_EVENT_CAR_ENTERING || lastEvent == GATE_EVENT_TIMEOUT) {
+                    lastEvent = GATE_EVENT_NONE;
+                }
+                entryState = GATE_IN_IDLE;
+                Serial.println(F("[Gate IN] Xe da VAO BAI HOAN TAT -> Dong barie VAO (0 deg)."));
+            }
+            break;
+
+        case GATE_IN_BLOCKED_FULL:
+            if (!confirmedEntryOut) {
+                if (lastEvent == GATE_EVENT_BLOCKED_FULL) {
+                    lastEvent = GATE_EVENT_NONE;
+                }
+                entryState = GATE_IN_IDLE;
+                Serial.println(F("[Gate IN] Xe bi chan cong VAO da roi di -> Ve IDLE."));
+            }
+            break;
+    }
+}
+
+void GateController::updateExitGate(unsigned long now) {
+    switch (exitState) {
+        case GATE_OUT_IDLE:
+            if (confirmedExitIn) {
 #if ENABLE_WIFI
-                // Có Wi-Fi: Chuyển sang chờ nhận diện biển số xe ra
-                currentSeq++;
-                pendingAuthPublish = true;
-                pendingAuthEntering = false;
-                authWaitTimestamp = now;
+                seqOut = ++nextSeq;
+                pendingOutAuthPublish = true;
+                outAuthWaitTimestamp = now;
                 lastEvent = GATE_EVENT_WAITING_AUTH;
                 activePlate[0] = '\0';
                 assignedSlot[0] = '\0';
-                changeState(GATE_STATE_WAIT_AUTH_OUT);
-                Serial.printf("[GateController] Phat hien xe muon ra -> Cho Edge AI auth (seq=%u)...\n", currentSeq);
+                exitState = GATE_OUT_WAIT_AUTH;
+                Serial.printf("[Gate OUT] Xe den cong RA -> Cho Edge AI auth (seq=%u)...\n", seqOut);
 #else
                 strncpy(activePlate, "LOCAL", sizeof(activePlate));
                 assignedSlot[0] = '\0';
-                openBarrier();
+                openExitBarrier();
                 lastEvent = GATE_EVENT_CAR_EXITING;
-                changeState(GATE_STATE_EXITING_WAIT_OUT);
-                Serial.println(F("[GateController] Local Mode: Mo Barie ra (90 deg)."));
+                exitState = GATE_OUT_OPEN_WAIT;
+                Serial.println(F("[Gate OUT] Local Mode: Mo Barie RA (90 deg)."));
 #endif
             }
             break;
 
-        case GATE_STATE_WAIT_AUTH_IN:
-            // Xe đã lùi ra khỏi cảm biến ngoài trước khi hoàn tất xác thực
-            if (!confirmedSensorOut) {
-                pendingAuthPublish = false;
-                lastEvent = GATE_EVENT_NONE;
-                changeState(GATE_STATE_IDLE);
-                Serial.println(F("[GateController] Xe ngoai cong da lui di -> Huy cho auth, ve IDLE."));
-                break;
-            }
-
-            // Quá thời gian GATE_AUTH_TIMEOUT_MS (8s) -> Kích hoạt Offline Fallback
-            if ((now - authWaitTimestamp) >= GATE_AUTH_TIMEOUT_MS) {
-                Serial.printf("[GateController] TIMEOUT 8s Backend khong tra loi (seq=%u) -> Kich hoat Offline Fallback!\n", currentSeq);
-                pendingOfflineFallbackLog = true;
-                fallbackSeq = currentSeq;
-                fallbackEntering = true;
-
-                if (parkingFull) {
-                    lastEvent = GATE_EVENT_BLOCKED_FULL;
-                    changeState(GATE_STATE_BLOCKED_FULL);
-                    Serial.println(F("[GateController] Offline Fallback: Bai da day -> Tu choi!"));
-                } else {
-                    strncpy(activePlate, "OFFLINE", sizeof(activePlate));
-                    assignedSlot[0] = '\0';
-                    openBarrier();
-                    lastEvent = GATE_EVENT_CAR_ENTERING;
-                    changeState(GATE_STATE_ENTERING_WAIT_IN);
-                    Serial.println(F("[GateController] Offline Fallback: Tu dong mo Barie cho xe vao."));
+        case GATE_OUT_WAIT_AUTH:
+            if (!confirmedExitIn) {
+                pendingOutAuthPublish = false;
+                if (lastEvent == GATE_EVENT_WAITING_AUTH && entryState != GATE_IN_WAIT_AUTH) {
+                    lastEvent = GATE_EVENT_NONE;
                 }
-            }
-            break;
-
-        case GATE_STATE_WAIT_AUTH_OUT:
-            // Xe đã lùi lại trong bãi trước khi hoàn tất xác thực
-            if (!confirmedSensorIn) {
-                pendingAuthPublish = false;
-                lastEvent = GATE_EVENT_NONE;
-                changeState(GATE_STATE_IDLE);
-                Serial.println(F("[GateController] Xe trong cong da lui lai -> Huy cho auth, ve IDLE."));
+                exitState = GATE_OUT_IDLE;
+                Serial.println(F("[Gate OUT] Xe cong RA da lui lai -> Huy cho auth, ve IDLE."));
                 break;
             }
 
-            // Quá thời gian GATE_AUTH_TIMEOUT_MS (8s) -> Kích hoạt Offline Fallback
-            if ((now - authWaitTimestamp) >= GATE_AUTH_TIMEOUT_MS) {
-                Serial.printf("[GateController] TIMEOUT 8s Backend khong tra loi (seq=%u) -> Kich hoat Offline Fallback xe ra!\n", currentSeq);
-                pendingOfflineFallbackLog = true;
-                fallbackSeq = currentSeq;
-                fallbackEntering = false;
-
-                strncpy(activePlate, "OFFLINE", sizeof(activePlate));
-                assignedSlot[0] = '\0';
-                openBarrier();
-                lastEvent = GATE_EVENT_CAR_EXITING;
-                changeState(GATE_STATE_EXITING_WAIT_OUT);
-                Serial.println(F("[GateController] Offline Fallback: Tu dong mo Barie cho xe ra."));
+            // Timeout 8s khi không nhận được phản hồi Edge -> Chuyển chờ Web Admin (không tự ý mở barie)
+            if ((now - outAuthWaitTimestamp) >= GATE_AUTH_TIMEOUT_MS) {
+                Serial.printf("[Gate OUT] TIMEOUT 8s khong nhan duoc lenh Edge (seq=%u) -> Giu barie DONG, cho Web duyet!\n", seqOut);
+                lastEvent = GATE_EVENT_MANUAL_REQUIRED;
+                exitState = GATE_OUT_WAIT_MANUAL;
             }
             break;
 
-        case GATE_STATE_ENTERING_WAIT_IN:
-            // Kiểm tra an toàn Timeout 10s nếu xe không đi tiếp
-            if ((now - barrierOpenTimestamp) >= GATE_SAFETY_TIMEOUT_MS) {
-                closeBarrier();
+        case GATE_OUT_WAIT_MANUAL:
+            if (!confirmedExitIn) {
+                if (lastEvent == GATE_EVENT_MANUAL_REQUIRED) {
+                    lastEvent = GATE_EVENT_NONE;
+                }
+                exitState = GATE_OUT_IDLE;
+                Serial.println(F("[Gate OUT] Xe cho duyet da lui khoi cong RA -> Ve IDLE."));
+            }
+            break;
+
+        case GATE_OUT_OPEN_WAIT:
+            if ((now - barrierOutOpenTimestamp) >= GATE_SAFETY_TIMEOUT_MS) {
+                closeExitBarrier();
                 lastEvent = GATE_EVENT_TIMEOUT;
-                changeState(GATE_STATE_IDLE);
-                Serial.println(F("[GateController] Timeout 10s: Xe vao khong qua cong -> Dong barie!"));
+                exitState = GATE_OUT_IDLE;
+                Serial.println(F("[Gate OUT] Timeout 10s: Xe ra khong qua cong -> Dong barie RA!"));
                 break;
             }
 
-            // Xe tiến vào kích hoạt cảm biến trong
-            if (confirmedSensorIn) {
-                changeState(GATE_STATE_ENTERING_PASSING);
-                Serial.println(F("[GateController] Xe dang di qua cong (cham S_IN)..."));
+            if (confirmedExitOut) {
+                exitState = GATE_OUT_PASSING;
+                Serial.println(F("[Gate OUT] Xe dang di qua cong RA (cham S_EXIT_OUT)..."));
             }
             break;
 
-        case GATE_STATE_ENTERING_PASSING:
-            // Kiểm tra an toàn Timeout 10s
-            if ((now - barrierOpenTimestamp) >= GATE_SAFETY_TIMEOUT_MS) {
-                closeBarrier();
+        case GATE_OUT_PASSING:
+            if ((now - barrierOutOpenTimestamp) >= GATE_SAFETY_TIMEOUT_MS) {
+                closeExitBarrier();
                 lastEvent = GATE_EVENT_TIMEOUT;
-                changeState(GATE_STATE_IDLE);
-                Serial.println(F("[GateController] Timeout 10s khi xe qua cong -> Dong barie an toan!"));
+                exitState = GATE_OUT_IDLE;
+                Serial.println(F("[Gate OUT] Timeout 10s khi xe qua cong RA -> Dong barie an toan!"));
                 break;
             }
 
-            // Xe đã vượt qua hẳn cả 2 cảm biến (cả 2 đều nhả về HIGH)
-            if (!confirmedSensorOut && !confirmedSensorIn) {
-                closeBarrier();
-                flagJustEntered = true;
-                lastEvent = GATE_EVENT_NONE;
-                changeState(GATE_STATE_IDLE);
-                Serial.println(F("[GateController] Xe da VAO BAI HOAN TAT -> Dong barie (0 deg)."));
-            }
-            break;
-
-        case GATE_STATE_EXITING_WAIT_OUT:
-            // Kiểm tra an toàn Timeout 10s nếu xe không ra
-            if ((now - barrierOpenTimestamp) >= GATE_SAFETY_TIMEOUT_MS) {
-                closeBarrier();
-                lastEvent = GATE_EVENT_TIMEOUT;
-                changeState(GATE_STATE_IDLE);
-                Serial.println(F("[GateController] Timeout 10s: Xe ra khong qua cong -> Dong barie!"));
-                break;
-            }
-
-            // Xe tiến ra kích hoạt cảm biến ngoài
-            if (confirmedSensorOut) {
-                changeState(GATE_STATE_EXITING_PASSING);
-                Serial.println(F("[GateController] Xe dang di qua cong (cham S_OUT)..."));
-            }
-            break;
-
-        case GATE_STATE_EXITING_PASSING:
-            // Kiểm tra an toàn Timeout 10s
-            if ((now - barrierOpenTimestamp) >= GATE_SAFETY_TIMEOUT_MS) {
-                closeBarrier();
-                lastEvent = GATE_EVENT_TIMEOUT;
-                changeState(GATE_STATE_IDLE);
-                Serial.println(F("[GateController] Timeout 10s khi xe ra cong -> Dong barie an toan!"));
-                break;
-            }
-
-            // Xe đã vượt qua hẳn cả 2 cảm biến ra ngoài (cả 2 đều nhả về HIGH)
-            if (!confirmedSensorOut && !confirmedSensorIn) {
-                closeBarrier();
+            if (!confirmedExitIn && !confirmedExitOut) {
+                closeExitBarrier();
                 flagJustExited = true;
-                lastEvent = GATE_EVENT_NONE;
-                changeState(GATE_STATE_IDLE);
-                Serial.println(F("[GateController] Xe da ROI BAI HOAN TAT -> Dong barie (0 deg)."));
+                if (lastEvent == GATE_EVENT_CAR_EXITING || lastEvent == GATE_EVENT_TIMEOUT) {
+                    lastEvent = GATE_EVENT_NONE;
+                }
+                exitState = GATE_OUT_IDLE;
+                Serial.println(F("[Gate OUT] Xe da ROI BAI HOAN TAT -> Dong barie RA (0 deg)."));
             }
             break;
 
-        case GATE_STATE_BLOCKED_FULL:
-            // Chờ cho đến khi xe ngoài cổng rời đi (S_OUT nhả về HIGH)
-            if (!confirmedSensorOut) {
-                lastEvent = GATE_EVENT_NONE;
-                changeState(GATE_STATE_IDLE);
-                Serial.println(F("[GateController] Xe bi chan da roi di -> Tro ve trang thai IDLE."));
+        case GATE_OUT_BLOCKED:
+            if (!confirmedExitIn) {
+                if (lastEvent == GATE_EVENT_BLOCKED_FULL || lastEvent == GATE_EVENT_NO_EXIT_REQUEST) {
+                    lastEvent = GATE_EVENT_NONE;
+                }
+                exitState = GATE_OUT_IDLE;
+                Serial.println(F("[Gate OUT] Xe bi chan cong RA da roi di -> Ve IDLE."));
             }
             break;
     }
 }
 
 void GateController::handleBackendCommand(uint32_t seq, bool allowOpen, const char* plate, const char* slot) {
-    // 1. Trường hợp đặc biệt: Lệnh khẩn cấp từ Web Admin (seq == 0 && allowOpen == true)
-    if (seq == 0 && allowOpen) {
-        if (plate && plate[0] != '\0') {
-            strncpy(activePlate, plate, sizeof(activePlate) - 1);
-            activePlate[sizeof(activePlate) - 1] = '\0';
+    const char* actionStr = (seq == 0 && !allowOpen) ? "CLOSE" : (allowOpen ? "OPEN" : "DENY");
+    handleBackendCommand(seq, actionStr, "", plate, slot);
+}
+
+void GateController::handleBackendCommand(uint32_t seq, bool allowOpen, const char* direction, const char* plate, const char* slot) {
+    const char* actionStr = (seq == 0 && !allowOpen) ? "CLOSE" : (allowOpen ? "OPEN" : "DENY");
+    handleBackendCommand(seq, actionStr, direction, plate, slot);
+}
+
+void GateController::handleBackendCommand(uint32_t seq, const char* action, const char* direction, const char* plate, const char* slot) {
+    const char* act = action ? action : "DENY";
+    bool allowOpen = (strcmp(act, "OPEN") == 0);
+    bool isWaitManual = (strcmp(act, "WAIT_MANUAL") == 0);
+
+    // 1. Lệnh thủ công / duyệt từ Web Admin (seq == 0)
+    if (seq == 0) {
+        bool targetOut = isDirectionOut(direction);
+
+        if (allowOpen) {
+            if (plate && plate[0] != '\0') {
+                strncpy(activePlate, plate, sizeof(activePlate) - 1);
+                activePlate[sizeof(activePlate) - 1] = '\0';
+            } else {
+                strncpy(activePlate, "ADMIN_OPEN", sizeof(activePlate));
+            }
+            if (slot && slot[0] != '\0') {
+                strncpy(assignedSlot, slot, sizeof(assignedSlot) - 1);
+                assignedSlot[sizeof(assignedSlot) - 1] = '\0';
+            } else {
+                assignedSlot[0] = '\0';
+            }
+
+            if (targetOut) {
+                openExitBarrier();
+                lastEvent = GATE_EVENT_CAR_EXITING;
+                exitState = GATE_OUT_OPEN_WAIT;
+                Serial.printf("[Gate OUT] Nhan lenh ADMIN: Mo Barie RA (Plate=%s)!\n", activePlate);
+            } else {
+                openEntryBarrier();
+                lastEvent = GATE_EVENT_CAR_ENTERING;
+                entryState = GATE_IN_OPEN_WAIT;
+                Serial.printf("[Gate IN] Nhan lenh ADMIN: Mo Barie VAO (Plate=%s, Slot=%s)!\n", activePlate, assignedSlot);
+            }
         } else {
-            strncpy(activePlate, "ADMIN_OPEN", sizeof(activePlate));
+            if (targetOut) {
+                closeExitBarrier();
+                exitState = GATE_OUT_IDLE;
+                Serial.println(F("[Gate OUT] Nhan lenh ADMIN: Dong Barie RA ngay lap tuc!"));
+            } else {
+                closeEntryBarrier();
+                entryState = GATE_IN_IDLE;
+                Serial.println(F("[Gate IN] Nhan lenh ADMIN: Dong Barie VAO ngay lap tuc!"));
+            }
         }
-        assignedSlot[0] = '\0';
-        openBarrier();
-        lastEvent = GATE_EVENT_CAR_ENTERING;
-        changeState(GATE_STATE_ENTERING_WAIT_IN);
-        Serial.println(F("[GateController] Nhận lệnh KHẨN CẤP/ADMIN: Mở Barie ngay lập tức!"));
         return;
     }
 
-    // 1b. Lệnh đóng barie thủ công từ Web Admin (seq == 0 && allowOpen == false)
-    if (seq == 0 && !allowOpen) {
-        closeBarrier();
-        changeState(GATE_STATE_IDLE);
-        Serial.println(F("[GateController] Nhận lệnh ADMIN: Đóng Barie ngay lập tức!"));
-        return;
-    }
-
-    // 2. Xử lý xe vào: Đang ở GATE_STATE_WAIT_AUTH_IN
-    if (currentState == GATE_STATE_WAIT_AUTH_IN && seq == currentSeq) {
+    // 2. Xử lý phản hồi cho Cổng VÀO
+    if (entryState == GATE_IN_WAIT_AUTH && seq == seqIn) {
         if (plate && plate[0] != '\0') {
             strncpy(activePlate, plate, sizeof(activePlate) - 1);
             activePlate[sizeof(activePlate) - 1] = '\0';
@@ -315,68 +419,97 @@ void GateController::handleBackendCommand(uint32_t seq, bool allowOpen, const ch
         }
 
         if (allowOpen) {
-            openBarrier();
+            openEntryBarrier();
             lastEvent = GATE_EVENT_CAR_ENTERING;
-            changeState(GATE_STATE_ENTERING_WAIT_IN);
-            Serial.printf("[GateController] Backend CHO PHEP VAO (seq=%u, Plate=%s, Slot=%s) -> Mo Barie!\n",
+            entryState = GATE_IN_OPEN_WAIT;
+            Serial.printf("[Gate IN] Backend CHO PHEP VAO (seq=%u, Plate=%s, Slot=%s) -> Mo Barie VAO!\n",
                           seq, activePlate, assignedSlot);
+        } else if (isWaitManual) {
+            lastEvent = GATE_EVENT_MANUAL_REQUIRED;
+            entryState = GATE_IN_WAIT_MANUAL;
+            Serial.printf("[Gate IN] Khong doc duoc bien (seq=%u) -> Giu Barie DONG, cho Web Admin!\n", seq);
         } else {
             lastEvent = GATE_EVENT_BLOCKED_FULL;
-            changeState(GATE_STATE_BLOCKED_FULL);
-            Serial.printf("[GateController] Backend TU CHOI VAO (seq=%u, Plate=%s) -> Giu Barie dong!\n",
+            entryState = GATE_IN_BLOCKED_FULL;
+            Serial.printf("[Gate IN] Backend TU CHOI VAO (seq=%u, Plate=%s) -> Giu Barie VAO dong!\n",
                           seq, activePlate);
         }
         return;
     }
 
-    // 3. Xử lý xe ra: Đang ở GATE_STATE_WAIT_AUTH_OUT
-    if (currentState == GATE_STATE_WAIT_AUTH_OUT && seq == currentSeq) {
+    // 3. Xử lý phản hồi cho Cổng RA
+    if (exitState == GATE_OUT_WAIT_AUTH && seq == seqOut) {
         if (plate && plate[0] != '\0') {
             strncpy(activePlate, plate, sizeof(activePlate) - 1);
             activePlate[sizeof(activePlate) - 1] = '\0';
         }
+        assignedSlot[0] = '\0';
 
         if (allowOpen) {
-            openBarrier();
+            openExitBarrier();
             lastEvent = GATE_EVENT_CAR_EXITING;
-            changeState(GATE_STATE_EXITING_WAIT_OUT);
-            Serial.printf("[GateController] Backend CHO PHEP RA (seq=%u, Plate=%s) -> Mo Barie!\n",
+            exitState = GATE_OUT_OPEN_WAIT;
+            Serial.printf("[Gate OUT] Backend CHO PHEP RA (seq=%u, Plate=%s) -> Mo Barie RA!\n",
                           seq, activePlate);
+        } else if (isWaitManual) {
+            lastEvent = GATE_EVENT_MANUAL_REQUIRED;
+            exitState = GATE_OUT_WAIT_MANUAL;
+            Serial.printf("[Gate OUT] Khong doc duoc bien (seq=%u) -> Giu Barie RA DONG, cho chon xe tren Web!\n", seq);
         } else {
-            lastEvent = GATE_EVENT_BLOCKED_FULL;
-            changeState(GATE_STATE_BLOCKED_FULL);
-            Serial.printf("[GateController] Backend TU CHOI RA (seq=%u, Plate=%s) -> Giu Barie dong!\n",
+            lastEvent = GATE_EVENT_NO_EXIT_REQUEST;
+            exitState = GATE_OUT_BLOCKED;
+            Serial.printf("[Gate OUT] Tu choi RA (seq=%u, Plate=%s): Chua co yeu cau ra tu App -> Giu Barie RA dong!\n",
                           seq, activePlate);
         }
         return;
     }
 
-    Serial.printf("[GateController] Bo qua command khong khop: seq=%u (current=%u, state=%s)\n",
-                  seq, currentSeq, getStateName());
+    Serial.printf("[GateController] Bo qua command khong khop: seq=%u (seqIn=%u [%s], seqOut=%u [%s])\n",
+                  seq, seqIn, getEntryStateName(), seqOut, getExitStateName());
 }
 
 bool GateController::consumePendingAuthRequest(uint32_t& outSeq, const char*& outDirection) {
-    if (pendingAuthPublish) {
-        pendingAuthPublish = false;
-        outSeq = currentSeq;
-        outDirection = pendingAuthEntering ? "IN" : "OUT";
+    if (pendingInAuthPublish) {
+        pendingInAuthPublish = false;
+        outSeq = seqIn;
+        outDirection = "IN";
+        return true;
+    }
+    if (pendingOutAuthPublish) {
+        pendingOutAuthPublish = false;
+        outSeq = seqOut;
+        outDirection = "OUT";
         return true;
     }
     return false;
 }
 
 bool GateController::consumeOfflineFallbackEvent(uint32_t& outSeq, bool& outEntering) {
-    if (pendingOfflineFallbackLog) {
-        pendingOfflineFallbackLog = false;
-        outSeq = fallbackSeq;
-        outEntering = fallbackEntering;
+    if (pendingInOfflineFallback) {
+        pendingInOfflineFallback = false;
+        outSeq = fallbackInSeq;
+        outEntering = true;
+        return true;
+    }
+    if (pendingOutOfflineFallback) {
+        pendingOutOfflineFallback = false;
+        outSeq = fallbackOutSeq;
+        outEntering = false;
         return true;
     }
     return false;
 }
 
 bool GateController::isBarrierOpen() const {
-    return barrierOpen;
+    return barrierInOpen || barrierOutOpen;
+}
+
+bool GateController::isBarrierInOpen() const {
+    return barrierInOpen;
+}
+
+bool GateController::isBarrierOutOpen() const {
+    return barrierOutOpen;
 }
 
 GateEvent GateController::getLastEvent() const {
@@ -384,7 +517,25 @@ GateEvent GateController::getLastEvent() const {
 }
 
 GateState GateController::getState() const {
-    return currentState;
+    if (entryState == GATE_IN_OPEN_WAIT) return GATE_STATE_ENTERING_WAIT_IN;
+    if (entryState == GATE_IN_PASSING) return GATE_STATE_ENTERING_PASSING;
+    if (entryState == GATE_IN_WAIT_AUTH) return GATE_STATE_WAIT_AUTH_IN;
+    if (entryState == GATE_IN_WAIT_MANUAL || entryState == GATE_IN_BLOCKED_FULL) return GATE_STATE_BLOCKED_FULL;
+
+    if (exitState == GATE_OUT_OPEN_WAIT) return GATE_STATE_EXITING_WAIT_OUT;
+    if (exitState == GATE_OUT_PASSING) return GATE_STATE_EXITING_PASSING;
+    if (exitState == GATE_OUT_WAIT_AUTH) return GATE_STATE_WAIT_AUTH_OUT;
+    if (exitState == GATE_OUT_WAIT_MANUAL || exitState == GATE_OUT_BLOCKED) return GATE_STATE_BLOCKED_FULL;
+
+    return GATE_STATE_IDLE;
+}
+
+GateInState GateController::getEntryState() const {
+    return entryState;
+}
+
+GateOutState GateController::getExitState() const {
+    return exitState;
 }
 
 void GateController::clearLastEvent() {
@@ -404,7 +555,7 @@ bool GateController::carJustExited() {
 }
 
 const char* GateController::getStateName() const {
-    switch (currentState) {
+    switch (getState()) {
         case GATE_STATE_IDLE:             return "IDLE";
         case GATE_STATE_WAIT_AUTH_IN:     return "WAIT_AUTH_IN";
         case GATE_STATE_WAIT_AUTH_OUT:    return "WAIT_AUTH_OUT";
@@ -417,6 +568,30 @@ const char* GateController::getStateName() const {
     }
 }
 
+const char* GateController::getEntryStateName() const {
+    switch (entryState) {
+        case GATE_IN_IDLE:         return "IDLE";
+        case GATE_IN_WAIT_AUTH:    return "WAIT_AUTH";
+        case GATE_IN_WAIT_MANUAL:  return "WAIT_MANUAL";
+        case GATE_IN_OPEN_WAIT:    return "OPEN_WAIT";
+        case GATE_IN_PASSING:      return "PASSING";
+        case GATE_IN_BLOCKED_FULL: return "BLOCKED_FULL";
+        default:                   return "UNKNOWN";
+    }
+}
+
+const char* GateController::getExitStateName() const {
+    switch (exitState) {
+        case GATE_OUT_IDLE:        return "IDLE";
+        case GATE_OUT_WAIT_AUTH:   return "WAIT_AUTH";
+        case GATE_OUT_WAIT_MANUAL: return "WAIT_MANUAL";
+        case GATE_OUT_OPEN_WAIT:   return "OPEN_WAIT";
+        case GATE_OUT_PASSING:     return "PASSING";
+        case GATE_OUT_BLOCKED:     return "BLOCKED";
+        default:                   return "UNKNOWN";
+    }
+}
+
 const char* GateController::getActivePlate() const {
     return activePlate;
 }
@@ -426,20 +601,27 @@ const char* GateController::getAssignedSlot() const {
 }
 
 uint32_t GateController::getCurrentSeq() const {
-    return currentSeq;
+    return nextSeq;
 }
 
-void GateController::openBarrier() {
-    gateServo.write(SERVO_ANGLE_OPEN);
-    barrierOpen = true;
-    barrierOpenTimestamp = millis();
+void GateController::openEntryBarrier() {
+    gateServoIn.write(SERVO_ANGLE_OPEN);
+    barrierInOpen = true;
+    barrierInOpenTimestamp = millis();
 }
 
-void GateController::closeBarrier() {
-    gateServo.write(SERVO_ANGLE_CLOSED);
-    barrierOpen = false;
+void GateController::closeEntryBarrier() {
+    gateServoIn.write(SERVO_ANGLE_CLOSED);
+    barrierInOpen = false;
 }
 
-void GateController::changeState(GateState newState) {
-    currentState = newState;
+void GateController::openExitBarrier() {
+    gateServoOut.write(SERVO_ANGLE_OPEN);
+    barrierOutOpen = true;
+    barrierOutOpenTimestamp = millis();
+}
+
+void GateController::closeExitBarrier() {
+    gateServoOut.write(SERVO_ANGLE_CLOSED);
+    barrierOutOpen = false;
 }

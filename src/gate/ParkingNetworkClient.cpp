@@ -9,6 +9,8 @@ ParkingNetworkClient::ParkingNetworkClient()
       lastMqttReconnectAttempt(0),
       lastHeartbeatTime(0),
       prevBarrierOpen(false),
+      prevBarrierInOpen(false),
+      prevBarrierOutOpen(false),
       offlineQueueCount(0),
       offlineQueueHead(0),
       offlineQueueTail(0) {
@@ -75,15 +77,15 @@ void ParkingNetworkClient::handleIncomingMessage(char* topic, byte* payload, uns
     if (strcmp(topic, TOPIC_GATE_COMMAND) == 0) {
         uint32_t seq = doc["seq"] | 0;
         const char* action = doc["action"] | "DENY";
+        const char* direction = doc["direction"] | "";
         const char* plate = doc["plate"] | "";
         const char* assignedSlot = doc["assignedSlot"] | "";
 
-        bool allowOpen = (strcmp(action, "OPEN") == 0);
-        Serial.printf("[MQTT RX] Nhan Command: seq=%u, action=%s, plate=%s, slot=%s\n",
-                      seq, action, plate, assignedSlot);
+        Serial.printf("[MQTT RX] Nhan Command: seq=%u, action=%s, dir=%s, plate=%s, slot=%s\n",
+                      seq, action, direction, plate, assignedSlot);
 
         if (gateRef) {
-            gateRef->handleBackendCommand(seq, allowOpen, plate, assignedSlot);
+            gateRef->handleBackendCommand(seq, action, direction, plate, assignedSlot);
         }
         return;
     }
@@ -199,30 +201,34 @@ void ParkingNetworkClient::update(ParkingMonitor& parking, GateController& gate)
         }
     }
 
-    // 2. Xử lý yêu cầu xác thực cổng mới từ GateController
+    // 2. Xử lý toàn bộ yêu cầu xác thực cổng mới từ GateController (cả VÀO & RA)
     uint32_t reqSeq = 0;
     const char* reqDir = nullptr;
-    if (gate.consumePendingAuthRequest(reqSeq, reqDir)) {
+    while (gate.consumePendingAuthRequest(reqSeq, reqDir)) {
         publishGateRequest(reqSeq, reqDir, parking.getTotalAvailable());
     }
 
     // 3. Xử lý sự kiện Offline Fallback nếu có
     uint32_t fbSeq = 0;
     bool fbEntering = false;
-    if (gate.consumeOfflineFallbackEvent(fbSeq, fbEntering)) {
+    while (gate.consumeOfflineFallbackEvent(fbSeq, fbEntering)) {
         enqueueOfflineEvent(fbSeq, fbEntering);
         if (mqttClient.connected()) {
             flushOfflineQueue();
         }
     }
 
-    // 4. Kiểm tra biến động trạng thái (cảm biến xe, đặt chỗ, barrier) hoặc heartbeat 30s
+    // 4. Kiểm tra biến động trạng thái (cảm biến xe, đặt chỗ, barie vào/ra) hoặc heartbeat 30s
     unsigned long now = millis();
     bool stateChanged = false;
 
-    if (gate.isBarrierOpen() != prevBarrierOpen) {
+    if (gate.isBarrierOpen() != prevBarrierOpen ||
+        gate.isBarrierInOpen() != prevBarrierInOpen ||
+        gate.isBarrierOutOpen() != prevBarrierOutOpen) {
         stateChanged = true;
         prevBarrierOpen = gate.isBarrierOpen();
+        prevBarrierInOpen = gate.isBarrierInOpen();
+        prevBarrierOutOpen = gate.isBarrierOutOpen();
     }
 
     for (uint8_t i = 0; i < NUM_SLOTS; i++) {
@@ -267,7 +273,11 @@ void ParkingNetworkClient::publishState(const ParkingMonitor& parking, const Gat
     doc["freeSlots"] = parking.getTotalAvailable();
     doc["totalSlots"] = NUM_SLOTS;
     doc["barrierOpen"] = gate.isBarrierOpen();
+    doc["barrierInOpen"] = gate.isBarrierInOpen();
+    doc["barrierOutOpen"] = gate.isBarrierOutOpen();
     doc["gateState"] = gate.getStateName();
+    doc["gateInState"] = gate.getEntryStateName();
+    doc["gateOutState"] = gate.getExitStateName();
 
     JsonObject slotsObj = doc["slots"].to<JsonObject>();
     for (uint8_t i = 0; i < NUM_SLOTS; i++) {

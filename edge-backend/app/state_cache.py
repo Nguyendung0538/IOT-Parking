@@ -4,6 +4,7 @@ from threading import RLock
 from typing import Any, Dict, List, Optional
 
 from app.models import (
+    ExitRequestItem,
     PendingRequestItem,
     ReservationItem,
     StatePayload,
@@ -24,7 +25,11 @@ class StateCache:
         # Trạng thái cảm biến vật lý (true: có xe, false: trống)
         self._sensor_occupied: Dict[str, bool] = {s: False for s in self.slot_ids}
         self._barrier_open: bool = False
+        self._barrier_in_open: bool = False
+        self._barrier_out_open: bool = False
         self._gate_state: str = "IDLE"
+        self._gate_in_state: str = "IDLE"
+        self._gate_out_state: str = "IDLE"
         self._uptime: int = 0
         self._last_state_at: float = 0.0
 
@@ -38,6 +43,9 @@ class StateCache:
         # res_id -> ReservationItem
         self._active_reservations: Dict[str, ReservationItem] = {}
         self._last_published_reserved_mask: Optional[Dict[str, bool]] = None
+
+        # Yêu cầu ra khỏi bãi từ App Android (session_id -> ExitRequestItem)
+        self._active_exit_requests: Dict[str, ExitRequestItem] = {}
 
         # Hàng đợi request đang chờ ảnh (tối đa 32 mục, phục vụ Phase S5)
         # seq -> PendingRequestItem
@@ -55,8 +63,16 @@ class StateCache:
         changed_slots: List[str] = []
         with self._lock:
             self._uptime = payload.uptime
-            self._barrier_open = payload.barrierOpen
+            self._barrier_in_open = (
+                payload.barrierInOpen if payload.barrierInOpen is not None else payload.barrierOpen
+            )
+            self._barrier_out_open = (
+                payload.barrierOutOpen if payload.barrierOutOpen is not None else False
+            )
+            self._barrier_open = payload.barrierOpen or self._barrier_in_open or self._barrier_out_open
             self._gate_state = payload.gateState
+            self._gate_in_state = payload.gateInState or payload.gateState
+            self._gate_out_state = payload.gateOutState or "IDLE"
             self._last_state_at = time.time()
 
             for slot_id in self.slot_ids:
@@ -161,6 +177,49 @@ class StateCache:
                         return item
         return None
 
+    # ==========================================
+    # QUẢN LÝ YÊU CẦU RA BÃI (EXIT REQUESTS)
+    # ==========================================
+    def replace_exit_requests(self, items: List[ExitRequestItem]) -> None:
+        """Thay thế toàn bộ danh sách yêu cầu ra đang active từ Firestore."""
+        with self._lock:
+            self._active_exit_requests = {item.sessionId: item for item in items}
+
+    def upsert_exit_request(self, item: ExitRequestItem) -> None:
+        with self._lock:
+            self._active_exit_requests[item.sessionId] = item
+
+    def remove_exit_request(self, session_id: str) -> bool:
+        with self._lock:
+            return self._active_exit_requests.pop(session_id, None) is not None
+
+    def purge_expired_exit_requests(self) -> bool:
+        now = datetime.now(timezone.utc)
+        removed = False
+        with self._lock:
+            expired_ids = [
+                s_id for s_id, item in self._active_exit_requests.items()
+                if item.expiresAt <= now
+            ]
+            for s_id in expired_ids:
+                del self._active_exit_requests[s_id]
+                removed = True
+        return removed
+
+    def has_active_exit_request_for_plate(self, plate_normalized: str) -> Optional[ExitRequestItem]:
+        """Kiểm tra xe có gửi yêu cầu ra còn hạn (expiresAt > now) hay không."""
+        if not plate_normalized:
+            return None
+        clean_target = "".join(c for c in plate_normalized.upper() if c.isalnum())
+        now = datetime.now(timezone.utc)
+        with self._lock:
+            for item in self._active_exit_requests.values():
+                if item.expiresAt > now:
+                    clean_plate = "".join(c for c in item.plate.upper() if c.isalnum())
+                    if clean_plate == clean_target:
+                        return item
+        return None
+
     def compute_reserved_mask(self) -> Dict[str, bool]:
         """Tính mặt nạ đặt chỗ 4 ô: ô X reserved <=> có active reservation chưa hết hạn."""
         now = datetime.now(timezone.utc)
@@ -248,7 +307,11 @@ class StateCache:
             return {
                 "sensorOccupied": dict(self._sensor_occupied),
                 "barrierOpen": self._barrier_open,
+                "barrierInOpen": self._barrier_in_open,
+                "barrierOutOpen": self._barrier_out_open,
                 "gateState": self._gate_state,
+                "gateInState": self._gate_in_state,
+                "gateOutState": self._gate_out_state,
                 "uptime": self._uptime,
                 "lastStateAgoS": round(now - self._last_state_at, 1) if self._last_state_at > 0 else None,
                 "gateOnline": self._gate_online,
@@ -265,6 +328,14 @@ class StateCache:
                     for r_id, item in self._active_reservations.items()
                 },
                 "reservedMask": mask,
+                "activeExitRequestsCount": len(self._active_exit_requests),
+                "activeExitRequests": {
+                    s_id: {
+                        "plate": item.plate,
+                        "expiresAt": item.expiresAt.isoformat(),
+                    }
+                    for s_id, item in self._active_exit_requests.items()
+                },
                 "freeSlotsPublic": self.free_slots_public(),
                 "pendingRequestsCount": len(self._pending_requests),
             }

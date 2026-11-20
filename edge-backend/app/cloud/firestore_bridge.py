@@ -11,7 +11,7 @@ from firebase_admin import credentials, firestore
 
 from app.cloud.base import CloudBridgeBase
 from app.config import settings
-from app.models import ReservationItem
+from app.models import ExitRequestItem, ReservationItem
 from app.state_cache import StateCache
 
 logger = logging.getLogger("firestore_bridge")
@@ -43,10 +43,12 @@ class FirestoreBridge(CloudBridgeBase):
 
         self._res_watch = None
         self._cmd_watch = None
+        self._exit_req_watch = None
 
         self._connected = False
         self._res_listener_status = "uninitialized"
         self._cmd_listener_status = "uninitialized"
+        self._exit_req_listener_status = "uninitialized"
 
     def start(self) -> None:
         logger.info("Đang khởi tạo Firebase Admin SDK...")
@@ -141,6 +143,13 @@ class FirestoreBridge(CloudBridgeBase):
                 pass
             self._cmd_watch = None
 
+        if self._exit_req_watch:
+            try:
+                self._exit_req_watch.unsubscribe()
+            except Exception:
+                pass
+            self._exit_req_watch = None
+
         # Đánh thức worker thread nếu đang chờ queue.get()
         self._write_queue.put(None)
 
@@ -165,10 +174,17 @@ class FirestoreBridge(CloudBridgeBase):
             "free_slots": free_slots,
         })
 
-    def enqueue_barrier_state(self, barrier_open: bool) -> None:
+    def enqueue_barrier_state(
+        self,
+        barrier_open: bool,
+        barrier_in_open: Optional[bool] = None,
+        barrier_out_open: Optional[bool] = None,
+    ) -> None:
         self._write_queue.put({
             "type": "barrier_state",
             "barrier_open": barrier_open,
+            "barrier_in_open": barrier_in_open,
+            "barrier_out_open": barrier_out_open,
         })
 
     def enqueue_device_status(self, device_id: str, online: bool, kind: str) -> None:
@@ -266,7 +282,7 @@ class FirestoreBridge(CloudBridgeBase):
         devices_to_write: Dict[str, Dict[str, Any]] = {}
         gate_events_to_write: List[Dict[str, Any]] = []
         update_lot_summary: Optional[int] = None
-        update_barrier_open: Optional[bool] = None
+        update_barrier_payload: Optional[Dict[str, bool]] = None
 
         for item in items:
             t = item["type"]
@@ -282,7 +298,11 @@ class FirestoreBridge(CloudBridgeBase):
             elif t == "lot_summary":
                 update_lot_summary = item["free_slots"]
             elif t == "barrier_state":
-                update_barrier_open = item["barrier_open"]
+                update_barrier_payload = {"barrierOpen": item["barrier_open"]}
+                if item.get("barrier_in_open") is not None:
+                    update_barrier_payload["barrierInOpen"] = item["barrier_in_open"]
+                if item.get("barrier_out_open") is not None:
+                    update_barrier_payload["barrierOutOpen"] = item["barrier_out_open"]
 
         try:
             batch = self.db.batch()
@@ -325,9 +345,9 @@ class FirestoreBridge(CloudBridgeBase):
                 elif info["kind"] == "cam":
                     batch.set(lot_ref, {"camOnline": info["online"]}, merge=True)
 
-            if update_barrier_open is not None:
+            if update_barrier_payload is not None:
                 lot_ref = self.db.collection("lots").document(settings.LOT_ID)
-                batch.set(lot_ref, {"barrierOpen": update_barrier_open}, merge=True)
+                batch.set(lot_ref, update_barrier_payload, merge=True)
 
             # 3. Ghi gateEvents: gateEvents/{autoId}
             for ev in gate_events_to_write:
@@ -399,6 +419,21 @@ class FirestoreBridge(CloudBridgeBase):
             self._cmd_listener_status = f"error: {e}"
             logger.error("Lỗi khi đăng ký listener deviceCommands: %s", e)
 
+        try:
+            # 3. Listener sessions có yêu cầu ra bãi (exitRequested == True)
+            exit_query = (
+                self.db.collection("sessions")
+                .where("lotId", "==", settings.LOT_ID)
+                .where("status", "==", "active")
+                .where("exitRequested", "==", True)
+            )
+            self._exit_req_watch = exit_query.on_snapshot(self._on_exit_requests_snapshot)
+            self._exit_req_listener_status = "active"
+            logger.info("Đã đăng ký Firestore on_snapshot: sessions exitRequested (lotId=%s)", settings.LOT_ID)
+        except Exception as e:
+            self._exit_req_listener_status = f"error: {e}"
+            logger.error("Lỗi khi đăng ký listener exitRequests: %s", e)
+
     def _on_reservations_snapshot(self, col_snapshot: Any, changes: Any, read_time: Any) -> None:
         """Xử lý sự kiện khi có đặt chỗ mới, hủy hoặc hoàn tất."""
         logger.debug("[Firestore Snapshot] Nhận cập nhật reservations (docs=%d)", len(col_snapshot))
@@ -439,6 +474,38 @@ class FirestoreBridge(CloudBridgeBase):
             logger.info("[Firestore -> Cache] Mặt nạ đặt chỗ thay đổi: %s", changed_mask)
             if self.mqtt:
                 self.mqtt.publish_reserved(changed_mask)
+
+    def _on_exit_requests_snapshot(self, col_snapshot: Any, changes: Any, read_time: Any) -> None:
+        """Đồng bộ danh sách xe đã bấm yêu cầu ra khỏi bãi trên App Android."""
+        exit_items: List[ExitRequestItem] = []
+
+        for doc in col_snapshot:
+            data = doc.to_dict() or {}
+            plate = data.get("plate") or data.get("plateDisplay") or ""
+            expires_at = data.get("exitRequestExpiresAt")
+            if not plate or not expires_at:
+                continue
+
+            if hasattr(expires_at, "to_datetime"):
+                exp_dt = expires_at.to_datetime()
+            elif isinstance(expires_at, datetime):
+                exp_dt = expires_at
+            else:
+                continue
+
+            if exp_dt.tzinfo is None:
+                exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+
+            exit_items.append(
+                ExitRequestItem(
+                    sessionId=doc.id,
+                    plate=plate,
+                    expiresAt=exp_dt,
+                )
+            )
+
+        self.cache.replace_exit_requests(exit_items)
+        logger.info("[Firestore -> Cache] Đồng bộ %d yêu cầu ra bãi đang hoạt động", len(exit_items))
 
     def _on_commands_snapshot(self, col_snapshot: Any, changes: Any, read_time: Any) -> None:
         """Xử lý lệnh điều khiển thiết bị (VD: Admin mở cổng khẩn cấp)."""
@@ -491,12 +558,40 @@ class FirestoreBridge(CloudBridgeBase):
                 "sentAt": firestore.SERVER_TIMESTAMP,
             })
 
+            cmd_payload = data.get("payload") or {}
+            raw_dir = cmd_payload.get("direction") if isinstance(cmd_payload, dict) else None
+            if not raw_dir:
+                raw_dir = data.get("direction")
+            cmd_dir = str(raw_dir).upper() if raw_dir else None
+
+            raw_plate = cmd_payload.get("plate") if isinstance(cmd_payload, dict) else None
+            if not raw_plate:
+                raw_plate = data.get("plate")
+            cmd_plate = str(raw_plate).strip()[:12] if raw_plate else ""
+
+            raw_slot = cmd_payload.get("assignedSlot") if isinstance(cmd_payload, dict) else None
+            if not raw_slot:
+                raw_slot = data.get("assignedSlot")
+            cmd_slot = str(raw_slot).strip() if raw_slot else ""
+
             if action == "OPEN_GATE":
                 if self.mqtt:
-                    self.mqtt.publish_gate_command(seq=0, action="OPEN", plate="ADMIN_OPEN")
+                    if cmd_dir or cmd_plate or cmd_slot:
+                        self.mqtt.publish_gate_command(
+                            seq=0,
+                            action="OPEN",
+                            plate=cmd_plate or "ADMIN_OPEN",
+                            assigned_slot=cmd_slot,
+                            direction=cmd_dir,
+                        )
+                    else:
+                        self.mqtt.publish_gate_command(seq=0, action="OPEN", plate="ADMIN_OPEN")
             elif action == "CLOSE_GATE":
                 if self.mqtt:
-                    self.mqtt.publish_gate_command(seq=0, action="CLOSE", plate="ADMIN_CLOSE")
+                    if cmd_dir:
+                        self.mqtt.publish_gate_command(seq=0, action="CLOSE", plate="ADMIN_CLOSE", direction=cmd_dir)
+                    else:
+                        self.mqtt.publish_gate_command(seq=0, action="CLOSE", plate="ADMIN_CLOSE")
             else:
                 logger.warning("[Firestore Commands] Action chưa hỗ trợ: %s", action)
 
@@ -509,8 +604,9 @@ class FirestoreBridge(CloudBridgeBase):
             if not self._running:
                 break
 
-            # 1. Tự động kiểm tra và gỡ các reservation đã hết hạn khỏi mask
+            # 1. Tự động kiểm tra và gỡ các reservation & exit request đã hết hạn
             purged = self.cache.purge_expired_reservations()
+            self.cache.purge_expired_exit_requests()
             if purged:
                 changed_mask = self.cache.reserved_mask_changed()
                 if changed_mask is not None:
@@ -537,6 +633,7 @@ class FirestoreBridge(CloudBridgeBase):
             "listeners": {
                 "reservations": self._res_listener_status,
                 "deviceCommands": self._cmd_listener_status,
+                "exitRequests": self._exit_req_listener_status,
             },
         }
 

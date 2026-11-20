@@ -120,12 +120,9 @@ void DisplayManager::updateLcd(const ParkingMonitor& parking, const GateControll
 
     unsigned long now = millis();
     GateEvent currentGateEvent = gate.getLastEvent();
-    GateState currentGateState = gate.getState();
 
-    // 1. Nếu đang ở trạng thái chờ Edge Server xác thực (WAIT_AUTH)
-    if (currentGateState == GATE_STATE_WAIT_AUTH_IN ||
-        currentGateState == GATE_STATE_WAIT_AUTH_OUT ||
-        currentGateEvent == GATE_EVENT_WAITING_AUTH) {
+    // 1. Nếu đang có sự kiện chờ Edge Server xác thực (WAIT_AUTH)
+    if (currentGateEvent == GATE_EVENT_WAITING_AUTH) {
         showLcdMessage("DANG NHAN DIEN..", "VUI LONG CHO... ");
         return;
     }
@@ -140,8 +137,10 @@ void DisplayManager::updateLcd(const ParkingMonitor& parking, const GateControll
 
     // 3. Hết thời gian hiển thị thông điệp tạm thời
     if (showingEventMsg && (now - eventMsgTimestamp >= LCD_MSG_DURATION_MS)) {
-        // Riêng trường hợp xe bị chặn vì bãi đầy, giữ thông báo cho tới khi xe lùi đi
-        if (currentGateEvent != GATE_EVENT_BLOCKED_FULL) {
+        // Riêng trường hợp xe bị chặn hoặc đang chờ duyệt biển trên Web, giữ thông báo cho tới khi xe rời đi hoặc được mở
+        if (currentGateEvent != GATE_EVENT_BLOCKED_FULL &&
+            currentGateEvent != GATE_EVENT_NO_EXIT_REQUEST &&
+            currentGateEvent != GATE_EVENT_MANUAL_REQUIRED) {
             showingEventMsg = false;
             activeEvent = GATE_EVENT_NONE;
         }
@@ -187,6 +186,16 @@ void DisplayManager::updateLcd(const ParkingMonitor& parking, const GateControll
             case GATE_EVENT_BLOCKED_FULL:
                 strncpy(targetLine1, "BAI XE DA DAY!  ", sizeof(targetLine1));
                 strncpy(targetLine2, "VUI LONG QUAY XE", sizeof(targetLine2));
+                break;
+
+            case GATE_EVENT_NO_EXIT_REQUEST:
+                strncpy(targetLine1, "CHUA YEU CAU RA ", sizeof(targetLine1));
+                strncpy(targetLine2, "MO APP XAC NHAN ", sizeof(targetLine2));
+                break;
+
+            case GATE_EVENT_MANUAL_REQUIRED:
+                strncpy(targetLine1, "KHONG RO BIEN SO", sizeof(targetLine1));
+                strncpy(targetLine2, "CHO WEB DUYET.. ", sizeof(targetLine2));
                 break;
 
             case GATE_EVENT_TIMEOUT:

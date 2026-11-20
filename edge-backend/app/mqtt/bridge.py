@@ -76,6 +76,8 @@ class MqttBridge:
         self._message_count: int = 0
         self._parse_errors: int = 0
         self._last_barrier_open: Optional[bool] = None
+        self._last_barrier_in_open: Optional[bool] = None
+        self._last_barrier_out_open: Optional[bool] = None
 
         self.client = mqtt.Client(
             callback_api_version=CallbackAPIVersion.VERSION2,
@@ -211,10 +213,24 @@ class MqttBridge:
             self.cloud.enqueue_slots(diff_slots, sensor_map)
             self.cloud.enqueue_lot_summary(self.cache.free_slots_public())
 
-        if self.cloud and payload.barrierOpen != self._last_barrier_open:
-            self._last_barrier_open = payload.barrierOpen
+        barrier_in = payload.barrierInOpen if payload.barrierInOpen is not None else payload.barrierOpen
+        barrier_out = payload.barrierOutOpen if payload.barrierOutOpen is not None else False
+        barrier_any = payload.barrierOpen or barrier_in or barrier_out
+
+        if self.cloud and (
+            barrier_any != self._last_barrier_open
+            or barrier_in != self._last_barrier_in_open
+            or barrier_out != self._last_barrier_out_open
+        ):
+            self._last_barrier_open = barrier_any
+            self._last_barrier_in_open = barrier_in
+            self._last_barrier_out_open = barrier_out
             if hasattr(self.cloud, "enqueue_barrier_state"):
-                self.cloud.enqueue_barrier_state(payload.barrierOpen)
+                self.cloud.enqueue_barrier_state(
+                    barrier_any,
+                    barrier_in_open=barrier_in,
+                    barrier_out_open=barrier_out,
+                )
 
     def _handle_gate_request(self, payload_bytes: bytes) -> None:
         try:
@@ -329,6 +345,8 @@ class MqttBridge:
             )
             return
 
+        # Với trường hợp Camera lỗi không kéo được frame nào nhưng chưa hết timeout fail-safe, giữ nguyên luồng;
+        # còn nếu kéo được frame nhưng OCR không nhận diện được, cho phép Arbiter quyết định WAIT_MANUAL ngay lập tức.
         decision = self.arbiter.decide(
             seq=seq,
             direction=direction.upper().strip(),
@@ -343,6 +361,7 @@ class MqttBridge:
             self.publish_gate_command(
                 seq=decision.seq,
                 action=decision.action,
+                direction=decision.direction,
                 plate=decision.plate_for_lcd,
                 assigned_slot=decision.assigned_slot,
                 reason=decision.deny_reason,
@@ -417,8 +436,9 @@ class MqttBridge:
         plate: str = "",
         assigned_slot: str = "",
         reason: Optional[str] = None,
+        direction: Optional[str] = None,
     ) -> bool:
-        """Publish lệnh mở/từ chối barie xuống topic parking/{DEVICE_ID}/gate/command (QoS 1, retain=False)."""
+        """Publish lệnh mở/đóng/từ chối barie xuống topic parking/{DEVICE_ID}/gate/command (QoS 1, retain=False)."""
         if not self._connected:
             logger.error("Không thể publish_gate_command: Chưa kết nối MQTT")
             return False
@@ -426,6 +446,7 @@ class MqttBridge:
         cmd = GateCommandPayload(
             seq=seq,
             action=action.upper(),
+            direction=direction.upper() if direction else None,
             plate=plate,
             assignedSlot=assigned_slot,
             reason=reason,
