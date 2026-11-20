@@ -25,6 +25,7 @@ class DummyCloudBridge(CloudBridgeBase):
         self.device_statuses: List[Dict[str, Any]] = []
         self.fallback_events: List[Dict[str, Any]] = []
         self.lot_summaries: List[int] = []
+        self.clear_waiting_exit_calls: int = 0
         self.started = False
         self.stopped = False
 
@@ -40,6 +41,9 @@ class DummyCloudBridge(CloudBridgeBase):
 
     def enqueue_lot_summary(self, free_slots: int) -> None:
         self.lot_summaries.append(free_slots)
+
+    def enqueue_clear_waiting_exit(self) -> None:
+        self.clear_waiting_exit_calls += 1
 
     def enqueue_device_status(self, device_id: str, online: bool, kind: str) -> None:
         self.device_statuses.append({"deviceId": device_id, "online": online, "kind": kind})

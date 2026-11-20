@@ -150,3 +150,20 @@ def test_pending_requests_queue():
     assert cache.consume_pending_request(101) is None
     assert cache.snapshot()["pendingRequestsCount"] == 1
 
+
+def test_active_sessions_sync_and_lookup():
+    cache = StateCache(slot_ids=["A1", "A2", "B1", "B2"])
+    assert cache.has_synced_active_sessions() is False
+
+    cache.replace_active_sessions({"s1": "30A-123.45", "s2": "51F99999"})
+    assert cache.has_synced_active_sessions() is True
+    assert cache.has_active_session_for_plate("30a12345") is True
+    assert cache.has_active_session_for_plate("51F-999.99") is True
+    assert cache.has_active_session_for_plate("18Y44444") is False
+
+    snap = cache.snapshot()
+    assert snap["activeSessionsSynced"] is True
+    assert snap["activeSessionsCount"] == 2
+    assert snap["activeSessionPlates"] == ["30A12345", "51F99999"]
+
+

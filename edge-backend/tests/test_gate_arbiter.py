@@ -357,3 +357,61 @@ def test_s5_t10_idempotency_duplicate_seq(arbiter):
     assert dec2.assigned_slot == "A1"
     assert dec2.plate_display == "61F-222.61"
 
+
+def test_exit_plate_not_in_lot_triggers_wait_manual(arbiter, test_cache):
+    """Khi danh sách phiên đỗ đã đồng bộ mà biển xe ra không có trong bãi -> WAIT_MANUAL (PLATE_NOT_IN_LOT)."""
+    from app.models import ExitRequestItem
+
+    now = datetime.now(timezone.utc)
+    test_cache.replace_active_sessions({"sess_1": "30A12345"})
+
+    # 1. Biển quét được không nằm trong active sessions -> giữ barie và chờ duyệt Web Admin
+    dec_unknown = arbiter.decide(
+        seq=201,
+        direction="OUT",
+        plate_raw="30A99999",
+        plate_normalized="30A99999",
+        plate_display="30A-999.99",
+        confidence=0.88,
+        is_valid=True,
+    )
+    assert dec_unknown.action == "WAIT_MANUAL"
+    assert dec_unknown.status == "pending_manual"
+    assert dec_unknown.deny_reason == "PLATE_NOT_IN_LOT"
+    assert "plate_not_in_lot" in dec_unknown.flags
+    assert "exit_manual_reconcile" in dec_unknown.flags
+
+    # 2. Biển có trong bãi nhưng chưa có yêu cầu ra -> DENY (NO_EXIT_REQUEST)
+    dec_no_req = arbiter.decide(
+        seq=202,
+        direction="OUT",
+        plate_raw="30A12345",
+        plate_normalized="30A12345",
+        plate_display="30A-123.45",
+        confidence=0.95,
+        is_valid=True,
+    )
+    assert dec_no_req.action == "DENY"
+    assert dec_no_req.deny_reason == "NO_EXIT_REQUEST"
+
+    # 3. Biển có trong bãi VÀ có yêu cầu ra -> OPEN
+    test_cache.upsert_exit_request(
+        ExitRequestItem(
+            sessionId="sess_1",
+            plate="30A12345",
+            expiresAt=now + timedelta(minutes=5),
+        )
+    )
+    dec_ok = arbiter.decide(
+        seq=203,
+        direction="OUT",
+        plate_raw="30A12345",
+        plate_normalized="30A12345",
+        plate_display="30A-123.45",
+        confidence=0.95,
+        is_valid=True,
+    )
+    assert dec_ok.action == "OPEN"
+    assert dec_ok.status == "ok"
+
+

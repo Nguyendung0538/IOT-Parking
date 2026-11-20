@@ -246,17 +246,29 @@ class GateArbiter:
         # 2. XỬ LÝ CHIỀU XE RA (OUT)
         if direction == "OUT":
             if is_valid:
-                self.cache.purge_expired_exit_requests()
-                if settings.REQUIRE_EXIT_REQUEST and not self.cache.has_active_exit_request_for_plate(plate_normalized):
-                    if "no_exit_request" not in flags:
-                        flags.append("no_exit_request")
-                    return_action = "DENY"
-                    status = "denied_no_exit_request"
-                    deny_reason = "NO_EXIT_REQUEST"
+                if (
+                    self.cache.has_synced_active_sessions()
+                    and not self.cache.has_active_session_for_plate(plate_normalized)
+                ):
+                    return_action = "WAIT_MANUAL"
+                    status = "pending_manual"
+                    deny_reason = "PLATE_NOT_IN_LOT"
+                    if "plate_not_in_lot" not in flags:
+                        flags.append("plate_not_in_lot")
+                    if "exit_manual_reconcile" not in flags:
+                        flags.append("exit_manual_reconcile")
                 else:
-                    return_action = "OPEN"
-                    status = "ok"
-                    deny_reason = None
+                    self.cache.purge_expired_exit_requests()
+                    if settings.REQUIRE_EXIT_REQUEST and not self.cache.has_active_exit_request_for_plate(plate_normalized):
+                        if "no_exit_request" not in flags:
+                            flags.append("no_exit_request")
+                        return_action = "DENY"
+                        status = "denied_no_exit_request"
+                        deny_reason = "NO_EXIT_REQUEST"
+                    else:
+                        return_action = "OPEN"
+                        status = "ok"
+                        deny_reason = None
             else:
                 return_action = "WAIT_MANUAL"
                 status = "pending_manual"

@@ -161,3 +161,97 @@ def test_mqtt_bridge_publish_gate_command():
     assert payload["action"] == "OPEN"
     assert payload["plate"] == "30G-12345"
     assert payload["assignedSlot"] == "B2"
+
+
+def test_phone_cam_exit_retries_when_plate_not_in_lot(dummy_cloud, monkeypatch):
+    """Khi xe ra quét được biển nhưng không khớp xe đang đỗ -> tự chụp lại trong vòng retry."""
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    from app.arbiter.gate_arbiter import GateArbiter
+    from app.models import ExitRequestItem
+
+    cache = StateCache(slot_ids=["A1", "A2", "B1", "B2"])
+    cache.replace_active_sessions({"sess_1": "30A12345"})
+    cache.upsert_exit_request(
+        ExitRequestItem(
+            sessionId="sess_1",
+            plate="30A12345",
+            expiresAt=datetime.now(timezone.utc) + timedelta(minutes=5),
+        )
+    )
+
+    arbiter = GateArbiter(cache=cache, cloud_bridge=dummy_cloud)
+    ai_mock = MagicMock()
+    attempt_1 = SimpleNamespace(
+        plate_raw="30A99999",
+        plate_normalized="30A99999",
+        plate_display="30A-999.99",
+        confidence=0.80,
+        is_valid=True,
+        best_frame_index=0,
+        crop_jpeg_bytes=b"crop1",
+        latency_ms=30.0,
+    )
+    attempt_2 = SimpleNamespace(
+        plate_raw="30A12345",
+        plate_normalized="30A12345",
+        plate_display="30A-123.45",
+        confidence=0.92,
+        is_valid=True,
+        best_frame_index=0,
+        crop_jpeg_bytes=b"crop2",
+        latency_ms=28.0,
+    )
+    ai_mock.recognize_frames.side_effect = [attempt_1, attempt_2]
+
+    monkeypatch.setattr("app.mqtt.bridge.fetch_phone_cam_frames", lambda **kwargs: [b"frame"])
+    monkeypatch.setattr(settings, "PHONE_CAM_URL", "http://127.0.0.1:8080/shot.jpg")
+    monkeypatch.setattr(settings, "PHONE_CAM_MAX_ATTEMPTS", 3)
+    monkeypatch.setattr(settings, "PHONE_CAM_RETRY_DELAY_MS", 1)
+
+    bridge = MqttBridge(cache=cache, cloud=dummy_cloud, arbiter=arbiter, ai_pipeline=ai_mock)
+    bridge._connected = True
+    bridge.client = MagicMock()
+    bridge.client.publish.return_value.rc = 0
+    arbiter.mqtt = bridge
+
+    try:
+        bridge._process_phone_cam_gate_request(seq=301, direction="OUT")
+        assert ai_mock.recognize_frames.call_count == 2
+        bridge.client.publish.assert_called_once()
+        cmd_payload = json.loads(bridge.client.publish.call_args[0][1])
+        assert cmd_payload["action"] == "OPEN"
+        assert cmd_payload["plate"] == "30A-123.45"
+    finally:
+        arbiter.stop()
+
+
+def test_mqtt_bridge_clears_waiting_exit_when_blocked_returns_idle(dummy_cloud):
+    """Khi gateOutState chuyển BLOCKED -> IDLE (xe lùi khỏi cổng ra), gọi enqueue_clear_waiting_exit."""
+    cache = StateCache(slot_ids=["A1", "A2", "B1", "B2"])
+    bridge = MqttBridge(cache=cache, cloud=dummy_cloud)
+
+    def send_out_state(gate_out_state: str):
+        payload = json.dumps({
+            "deviceId": "ESP32_PARKING_01",
+            "uptime": 210,
+            "freeSlots": 3,
+            "totalSlots": 4,
+            "barrierOpen": False,
+            "gateState": "IDLE",
+            "gateOutState": gate_out_state,
+            "slots": {},
+        }).encode("utf-8")
+        bridge._handle_state(payload)
+
+    # 1. BLOCKED -> OPEN_WAIT (không xóa waiting flag)
+    send_out_state("BLOCKED")
+    send_out_state("OPEN_WAIT")
+    assert dummy_cloud.clear_waiting_exit_calls == 0
+
+    # 2. BLOCKED -> IDLE (xe lùi lại rời khỏi cổng ra) -> xóa waiting flag
+    send_out_state("BLOCKED")
+    send_out_state("IDLE")
+    assert dummy_cloud.clear_waiting_exit_calls == 1
+
+

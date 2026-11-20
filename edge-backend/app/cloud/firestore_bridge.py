@@ -187,6 +187,9 @@ class FirestoreBridge(CloudBridgeBase):
             "barrier_out_open": barrier_out_open,
         })
 
+    def enqueue_clear_waiting_exit(self) -> None:
+        self._write_queue.put({"type": "clear_waiting_exit"})
+
     def enqueue_device_status(self, device_id: str, online: bool, kind: str) -> None:
         self._write_queue.put({
             "type": "device_status",
@@ -243,6 +246,7 @@ class FirestoreBridge(CloudBridgeBase):
         sensor_map = self.cache.get_sensor_occupied()
         for slot_id, occ in sensor_map.items():
             self.enqueue_slots([slot_id], sensor_map)
+        self.enqueue_lot_summary(self.cache.free_slots_public())
         self.enqueue_device_status(settings.DEVICE_ID, self.cache.is_gate_online(), "gate")
         self.enqueue_device_status(settings.CAM_DEVICE_ID, self.cache.is_cam_online(), "cam")
 
@@ -283,6 +287,7 @@ class FirestoreBridge(CloudBridgeBase):
         gate_events_to_write: List[Dict[str, Any]] = []
         update_lot_summary: Optional[int] = None
         update_barrier_payload: Optional[Dict[str, bool]] = None
+        should_clear_waiting_exit = False
 
         for item in items:
             t = item["type"]
@@ -303,6 +308,8 @@ class FirestoreBridge(CloudBridgeBase):
                     update_barrier_payload["barrierInOpen"] = item["barrier_in_open"]
                 if item.get("barrier_out_open") is not None:
                     update_barrier_payload["barrierOutOpen"] = item["barrier_out_open"]
+            elif t == "clear_waiting_exit":
+                should_clear_waiting_exit = True
 
         try:
             batch = self.db.batch()
@@ -349,6 +356,17 @@ class FirestoreBridge(CloudBridgeBase):
                 lot_ref = self.db.collection("lots").document(settings.LOT_ID)
                 batch.set(lot_ref, update_barrier_payload, merge=True)
 
+            if update_lot_summary is not None:
+                lot_ref = self.db.collection("lots").document(settings.LOT_ID)
+                batch.set(
+                    lot_ref,
+                    {
+                        "availableSlots": int(update_lot_summary),
+                        "updatedAt": firestore.SERVER_TIMESTAMP,
+                    },
+                    merge=True,
+                )
+
             # 3. Ghi gateEvents: gateEvents/{autoId}
             for ev in gate_events_to_write:
                 event_ref = self.db.collection("gateEvents").document()
@@ -373,6 +391,17 @@ class FirestoreBridge(CloudBridgeBase):
                     "source": "edge",
                     "serverTs": firestore.SERVER_TIMESTAMP,
                 })
+
+            if should_clear_waiting_exit:
+                waiting_docs = (
+                    self.db.collection("sessions")
+                    .where("lotId", "==", settings.LOT_ID)
+                    .where("status", "==", "active")
+                    .where("waitingAtExitGate", "==", True)
+                    .stream()
+                )
+                for wdoc in waiting_docs:
+                    batch.update(wdoc.reference, {"waitingAtExitGate": False})
 
             batch.commit()
             logger.debug(
@@ -420,19 +449,18 @@ class FirestoreBridge(CloudBridgeBase):
             logger.error("Lỗi khi đăng ký listener deviceCommands: %s", e)
 
         try:
-            # 3. Listener sessions có yêu cầu ra bãi (exitRequested == True)
-            exit_query = (
+            # 3. Listener toàn bộ sessions active (xe đang đỗ & yêu cầu ra bãi exitRequested)
+            sessions_query = (
                 self.db.collection("sessions")
                 .where("lotId", "==", settings.LOT_ID)
                 .where("status", "==", "active")
-                .where("exitRequested", "==", True)
             )
-            self._exit_req_watch = exit_query.on_snapshot(self._on_exit_requests_snapshot)
+            self._exit_req_watch = sessions_query.on_snapshot(self._on_active_sessions_snapshot)
             self._exit_req_listener_status = "active"
-            logger.info("Đã đăng ký Firestore on_snapshot: sessions exitRequested (lotId=%s)", settings.LOT_ID)
+            logger.info("Đã đăng ký Firestore on_snapshot: sessions active & exitRequested (lotId=%s)", settings.LOT_ID)
         except Exception as e:
             self._exit_req_listener_status = f"error: {e}"
-            logger.error("Lỗi khi đăng ký listener exitRequests: %s", e)
+            logger.error("Lỗi khi đăng ký listener activeSessions: %s", e)
 
     def _on_reservations_snapshot(self, col_snapshot: Any, changes: Any, read_time: Any) -> None:
         """Xử lý sự kiện khi có đặt chỗ mới, hủy hoặc hoàn tất."""
@@ -468,6 +496,7 @@ class FirestoreBridge(CloudBridgeBase):
             )
 
         self.cache.replace_reservations(res_items)
+        self.enqueue_lot_summary(self.cache.free_slots_public())
         changed_mask = self.cache.reserved_mask_changed()
 
         if changed_mask is not None:
@@ -475,37 +504,52 @@ class FirestoreBridge(CloudBridgeBase):
             if self.mqtt:
                 self.mqtt.publish_reserved(changed_mask)
 
-    def _on_exit_requests_snapshot(self, col_snapshot: Any, changes: Any, read_time: Any) -> None:
-        """Đồng bộ danh sách xe đã bấm yêu cầu ra khỏi bãi trên App Android."""
+    def _on_active_sessions_snapshot(self, col_snapshot: Any, changes: Any, read_time: Any) -> None:
+        """Đồng bộ danh sách xe đang đỗ trong bãi và các yêu cầu ra khỏi bãi từ App Android."""
+        active_sessions: Dict[str, str] = {}
         exit_items: List[ExitRequestItem] = []
 
         for doc in col_snapshot:
             data = doc.to_dict() or {}
             plate = data.get("plate") or data.get("plateDisplay") or ""
-            expires_at = data.get("exitRequestExpiresAt")
-            if not plate or not expires_at:
+            if not plate:
                 continue
 
-            if hasattr(expires_at, "to_datetime"):
-                exp_dt = expires_at.to_datetime()
-            elif isinstance(expires_at, datetime):
-                exp_dt = expires_at
-            else:
-                continue
+            active_sessions[doc.id] = plate
 
-            if exp_dt.tzinfo is None:
-                exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+            if data.get("exitRequested") is True:
+                expires_at = data.get("exitRequestExpiresAt")
+                if not expires_at:
+                    continue
 
-            exit_items.append(
-                ExitRequestItem(
-                    sessionId=doc.id,
-                    plate=plate,
-                    expiresAt=exp_dt,
+                if hasattr(expires_at, "to_datetime"):
+                    exp_dt = expires_at.to_datetime()
+                elif isinstance(expires_at, datetime):
+                    exp_dt = expires_at
+                else:
+                    continue
+
+                if exp_dt.tzinfo is None:
+                    exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+
+                exit_items.append(
+                    ExitRequestItem(
+                        sessionId=doc.id,
+                        plate=plate,
+                        expiresAt=exp_dt,
+                    )
                 )
-            )
 
+        self.cache.replace_active_sessions(active_sessions)
         self.cache.replace_exit_requests(exit_items)
-        logger.info("[Firestore -> Cache] Đồng bộ %d yêu cầu ra bãi đang hoạt động", len(exit_items))
+        logger.info(
+            "[Firestore -> Cache] Đồng bộ %d xe đang đỗ trong bãi (%d yêu cầu ra đang hoạt động)",
+            len(active_sessions),
+            len(exit_items),
+        )
+
+    def _on_exit_requests_snapshot(self, col_snapshot: Any, changes: Any, read_time: Any) -> None:
+        self._on_active_sessions_snapshot(col_snapshot, changes, read_time)
 
     def _on_commands_snapshot(self, col_snapshot: Any, changes: Any, read_time: Any) -> None:
         """Xử lý lệnh điều khiển thiết bị (VD: Admin mở cổng khẩn cấp)."""

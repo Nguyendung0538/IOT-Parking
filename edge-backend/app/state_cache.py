@@ -47,6 +47,10 @@ class StateCache:
         # Yêu cầu ra khỏi bãi từ App Android (session_id -> ExitRequestItem)
         self._active_exit_requests: Dict[str, ExitRequestItem] = {}
 
+        # Phiên đỗ đang active trong bãi (session_id -> biển số chuẩn hóa)
+        self._active_sessions: Dict[str, str] = {}
+        self._active_sessions_synced: bool = False
+
         # Hàng đợi request đang chờ ảnh (tối đa 32 mục, phục vụ Phase S5)
         # seq -> PendingRequestItem
         self._pending_requests: Dict[int, PendingRequestItem] = {}
@@ -178,8 +182,33 @@ class StateCache:
         return None
 
     # ==========================================
-    # QUẢN LÝ YÊU CẦU RA BÃI (EXIT REQUESTS)
+    # QUẢN LÝ YÊU CẦU RA BÃI & PHIÊN ĐỖ ACTIVE
     # ==========================================
+    def replace_active_sessions(self, sessions: Dict[str, str]) -> None:
+        """Cập nhật toàn bộ danh sách biển số xe đang đỗ (status == 'active') từ Firestore."""
+        normalized: Dict[str, str] = {}
+        for sid, plate in sessions.items():
+            clean = "".join(c for c in (plate or "").upper() if c.isalnum())
+            if sid and clean:
+                normalized[sid] = clean
+        with self._lock:
+            self._active_sessions = normalized
+            self._active_sessions_synced = True
+
+    def has_synced_active_sessions(self) -> bool:
+        with self._lock:
+            return self._active_sessions_synced
+
+    def has_active_session_for_plate(self, plate_normalized: str) -> bool:
+        """Kiểm tra biển số có đang nằm trong danh sách phiên đỗ active của bãi hay không."""
+        if not plate_normalized:
+            return False
+        clean_target = "".join(c for c in plate_normalized.upper() if c.isalnum())
+        if not clean_target:
+            return False
+        with self._lock:
+            return clean_target in self._active_sessions.values()
+
     def replace_exit_requests(self, items: List[ExitRequestItem]) -> None:
         """Thay thế toàn bộ danh sách yêu cầu ra đang active từ Firestore."""
         with self._lock:
@@ -328,6 +357,9 @@ class StateCache:
                     for r_id, item in self._active_reservations.items()
                 },
                 "reservedMask": mask,
+                "activeSessionsCount": len(self._active_sessions),
+                "activeSessionPlates": sorted(set(self._active_sessions.values())),
+                "activeSessionsSynced": self._active_sessions_synced,
                 "activeExitRequestsCount": len(self._active_exit_requests),
                 "activeExitRequests": {
                     s_id: {

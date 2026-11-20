@@ -52,6 +52,10 @@ class CloudBridgeBase(ABC):
         """Đưa sự kiện cổng vào hàng đợi ghi collection gateEvents."""
         pass
 
+    def enqueue_clear_waiting_exit(self) -> None:
+        """Xóa cờ waitingAtExitGate khi xe bị chặn ở cổng ra đã lùi lại."""
+        pass
+
     @abstractmethod
     def status(self) -> Dict[str, Any]:
         """Trả về thông tin chẩn đoán trạng thái phục vụ endpoint /health."""

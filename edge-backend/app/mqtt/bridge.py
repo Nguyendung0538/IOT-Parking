@@ -78,6 +78,7 @@ class MqttBridge:
         self._last_barrier_open: Optional[bool] = None
         self._last_barrier_in_open: Optional[bool] = None
         self._last_barrier_out_open: Optional[bool] = None
+        self._last_gate_out_state: Optional[str] = None
 
         self.client = mqtt.Client(
             callback_api_version=CallbackAPIVersion.VERSION2,
@@ -232,6 +233,13 @@ class MqttBridge:
                     barrier_out_open=barrier_out,
                 )
 
+        gate_out_state = (payload.gateOutState or "IDLE").upper().strip()
+        if self._last_gate_out_state == "BLOCKED" and gate_out_state == "IDLE":
+            logger.info("[MQTT RX] Xe bi chan tai Cong RA da lui lai (BLOCKED -> IDLE) -> Xoa co cho ra bai.")
+            if self.cloud and hasattr(self.cloud, "enqueue_clear_waiting_exit"):
+                self.cloud.enqueue_clear_waiting_exit()
+        self._last_gate_out_state = gate_out_state
+
     def _handle_gate_request(self, payload_bytes: bytes) -> None:
         try:
             data = json.loads(payload_bytes.decode("utf-8"))
@@ -281,7 +289,8 @@ class MqttBridge:
                     )
 
     def _process_phone_cam_gate_request(self, seq: int, direction: str) -> None:
-        """Luồng nền tự động chụp từ Camera Điện thoại -> YOLO -> (Retry nếu OCR lỗi) -> GateArbiter -> Mở cổng."""
+        """Luồng nền tự động chụp từ Camera Điện thoại -> YOLO -> (Retry nếu OCR lỗi/biển ra chưa khớp bãi) -> GateArbiter -> Mở cổng."""
+        dir_norm = direction.upper().strip()
         t0 = time.perf_counter()
         max_attempts = max(1, settings.PHONE_CAM_MAX_ATTEMPTS)
 
@@ -312,30 +321,55 @@ class MqttBridge:
                 continue
 
             res = self.ai_pipeline.recognize_frames(frames_bytes)
-            best_frames = frames_bytes
-            best_res = res
+            if (
+                best_res is None
+                or (res.is_valid and not best_res.is_valid)
+                or (res.is_valid == best_res.is_valid and res.confidence >= best_res.confidence)
+            ):
+                best_frames = frames_bytes
+                best_res = res
 
             if res.is_valid and res.plate_display:
-                if attempt > 1:
+                if (
+                    dir_norm == "OUT"
+                    and self.cache.has_synced_active_sessions()
+                    and not self.cache.has_active_session_for_plate(res.plate_normalized)
+                ):
                     logger.info(
-                        "[PhoneCam] Chụp lại lần %d/%d THÀNH CÔNG cho seq=%u -> '%s'",
+                        "[PhoneCam] Lần %d/%d đọc được '%s' nhưng KHÔNG CÓ trong bãi (seq=%u) -> %s",
                         attempt,
                         max_attempts,
-                        seq,
                         res.plate_display,
+                        seq,
+                        "Tự động chụp lại..." if attempt < max_attempts else "Hết lượt thử -> Chờ Admin xử lý.",
                     )
-                break
-
-            logger.info(
-                "[PhoneCam] Lần %d/%d chưa đọc được biển hợp lệ (raw='%s', seq=%u) -> %s",
-                attempt,
-                max_attempts,
-                res.plate_raw,
-                seq,
-                "Chụp lại..." if attempt < max_attempts else "Hết lượt thử.",
-            )
-            if attempt < max_attempts:
-                time.sleep(settings.PHONE_CAM_RETRY_DELAY_MS / 1000.0)
+                    if attempt < max_attempts:
+                        time.sleep(settings.PHONE_CAM_RETRY_DELAY_MS / 1000.0)
+                        continue
+                else:
+                    if dir_norm == "OUT":
+                        best_frames = frames_bytes
+                        best_res = res
+                    if attempt > 1:
+                        logger.info(
+                            "[PhoneCam] Chụp lại lần %d/%d THÀNH CÔNG cho seq=%u -> '%s'",
+                            attempt,
+                            max_attempts,
+                            seq,
+                            res.plate_display,
+                        )
+                    break
+            else:
+                logger.info(
+                    "[PhoneCam] Lần %d/%d chưa đọc được biển hợp lệ (raw='%s', seq=%u) -> %s",
+                    attempt,
+                    max_attempts,
+                    res.plate_raw,
+                    seq,
+                    "Chụp lại..." if attempt < max_attempts else "Hết lượt thử.",
+                )
+                if attempt < max_attempts:
+                    time.sleep(settings.PHONE_CAM_RETRY_DELAY_MS / 1000.0)
 
         if not best_frames or best_res is None:
             logger.warning(
@@ -346,10 +380,10 @@ class MqttBridge:
             return
 
         # Với trường hợp Camera lỗi không kéo được frame nào nhưng chưa hết timeout fail-safe, giữ nguyên luồng;
-        # còn nếu kéo được frame nhưng OCR không nhận diện được, cho phép Arbiter quyết định WAIT_MANUAL ngay lập tức.
+        # còn nếu kéo được frame nhưng OCR không nhận diện được hoặc xe ra không khớp bãi, cho phép Arbiter quyết định WAIT_MANUAL ngay lập tức.
         decision = self.arbiter.decide(
             seq=seq,
-            direction=direction.upper().strip(),
+            direction=dir_norm,
             plate_raw=best_res.plate_raw,
             plate_normalized=best_res.plate_normalized,
             plate_display=best_res.plate_display,

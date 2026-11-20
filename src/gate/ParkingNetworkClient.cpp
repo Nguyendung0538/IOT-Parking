@@ -11,6 +11,7 @@ ParkingNetworkClient::ParkingNetworkClient()
       prevBarrierOpen(false),
       prevBarrierInOpen(false),
       prevBarrierOutOpen(false),
+      prevGateOutState(GATE_OUT_IDLE),
       offlineQueueCount(0),
       offlineQueueHead(0),
       offlineQueueTail(0) {
@@ -229,6 +230,11 @@ void ParkingNetworkClient::update(ParkingMonitor& parking, GateController& gate)
         prevBarrierOpen = gate.isBarrierOpen();
         prevBarrierInOpen = gate.isBarrierInOpen();
         prevBarrierOutOpen = gate.isBarrierOutOpen();
+    }
+
+    if (gate.getExitState() != prevGateOutState) {
+        stateChanged = true;
+        prevGateOutState = gate.getExitState();
     }
 
     for (uint8_t i = 0; i < NUM_SLOTS; i++) {

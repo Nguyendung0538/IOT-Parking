@@ -50,6 +50,7 @@ private:
     bool prevBarrierOpen;
     bool prevBarrierInOpen;
     bool prevBarrierOutOpen;
+    GateOutState prevGateOutState;
 
     // Hàng đợi lưu các sự kiện Offline Fallback khi mất mạng
     static const uint8_t OFFLINE_QUEUE_CAPACITY = 8;
