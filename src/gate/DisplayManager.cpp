@@ -114,6 +114,20 @@ void DisplayManager::showLcdMessage(const char* line1, const char* line2) {
     }
 }
 
+static void formatGateOccupancyLine(char* buf, size_t bufSize,
+                                    uint8_t freeByGate, uint8_t carsInLot,
+                                    uint8_t reservedCount) {
+    char raw[32];
+    if (carsInLot >= NUM_SLOTS) {
+        snprintf(raw, sizeof(raw), "Xe:%u/%u (HET CHO)", carsInLot, NUM_SLOTS);
+    } else if (reservedCount > 0) {
+        snprintf(raw, sizeof(raw), "Con:%u/%u Xe:%u R:%u", freeByGate, NUM_SLOTS, carsInLot, reservedCount);
+    } else {
+        snprintf(raw, sizeof(raw), "Con:%u/%u (Xe:%u/%u)", freeByGate, NUM_SLOTS, carsInLot, NUM_SLOTS);
+    }
+    snprintf(buf, bufSize, "%-16.16s", raw);
+}
+
 void DisplayManager::updateLcd(const ParkingMonitor& parking, const GateController& gate) {
     char targetLine1[17] = " SMART PARKING  ";
     char targetLine2[17];
@@ -151,9 +165,9 @@ void DisplayManager::updateLcd(const ParkingMonitor& parking, const GateControll
         lastHandledEvent = GATE_EVENT_NONE;
     }
 
-    uint8_t totalAvail = parking.getTotalAvailable();
-    uint8_t availA = parking.getAvailableA();
-    uint8_t availB = parking.getAvailableB();
+    uint8_t carsInLot = gate.getCarsInLot();
+    uint8_t reservedCount = parking.getReservedMaskCount();
+    uint8_t freeByGate = gate.getAvailableByGate(reservedCount);
     const char* plate = gate.getActivePlate();
     const char* slot = gate.getAssignedSlot();
 
@@ -170,7 +184,7 @@ void DisplayManager::updateLcd(const ParkingMonitor& parking, const GateControll
                 if (plate[0] != '\0' && strcmp(plate, "LOCAL") != 0 && strcmp(plate, "ADMIN_OPEN") != 0) {
                     snprintf(targetLine2, sizeof(targetLine2), "BS: %-12s", plate);
                 } else {
-                    snprintf(targetLine2, sizeof(targetLine2), "Tr:%d/4 (A:%d B:%d)", totalAvail, availA, availB);
+                    formatGateOccupancyLine(targetLine2, sizeof(targetLine2), freeByGate, carsInLot, reservedCount);
                 }
                 break;
 
@@ -179,7 +193,7 @@ void DisplayManager::updateLcd(const ParkingMonitor& parking, const GateControll
                 if (plate[0] != '\0' && strcmp(plate, "LOCAL") != 0) {
                     snprintf(targetLine2, sizeof(targetLine2), "BS: %-12s", plate);
                 } else {
-                    snprintf(targetLine2, sizeof(targetLine2), "Tr:%d/4 (A:%d B:%d)", totalAvail, availA, availB);
+                    formatGateOccupancyLine(targetLine2, sizeof(targetLine2), freeByGate, carsInLot, reservedCount);
                 }
                 break;
 
@@ -200,21 +214,17 @@ void DisplayManager::updateLcd(const ParkingMonitor& parking, const GateControll
 
             case GATE_EVENT_TIMEOUT:
                 strncpy(targetLine1, "DONG BARIE...   ", sizeof(targetLine1));
-                snprintf(targetLine2, sizeof(targetLine2), "Tr:%d/4 (A:%d B:%d)", totalAvail, availA, availB);
+                formatGateOccupancyLine(targetLine2, sizeof(targetLine2), freeByGate, carsInLot, reservedCount);
                 break;
 
             default:
                 strncpy(targetLine1, " SMART PARKING  ", sizeof(targetLine1));
-                snprintf(targetLine2, sizeof(targetLine2), "Tr:%d/4 (A:%d B:%d)", totalAvail, availA, availB);
+                formatGateOccupancyLine(targetLine2, sizeof(targetLine2), freeByGate, carsInLot, reservedCount);
                 break;
         }
     } else {
         strncpy(targetLine1, " SMART PARKING  ", sizeof(targetLine1));
-        if (totalAvail == 0) {
-            strncpy(targetLine2, "Tr:0/4 (HET CHO)", sizeof(targetLine2));
-        } else {
-            snprintf(targetLine2, sizeof(targetLine2), "Tr:%d/4 (A:%d B:%d)", totalAvail, availA, availB);
-        }
+        formatGateOccupancyLine(targetLine2, sizeof(targetLine2), freeByGate, carsInLot, reservedCount);
     }
 
     targetLine1[sizeof(targetLine1) - 1] = '\0';

@@ -167,3 +167,40 @@ def test_active_sessions_sync_and_lookup():
     assert snap["activeSessionPlates"] == ["30A12345", "51F99999"]
 
 
+def test_cars_in_lot_and_free_slots_by_gate():
+    cache = StateCache(slot_ids=["A1", "A2", "B1", "B2"])
+    assert cache.get_cars_in_lot() is None
+    assert cache.free_slots_by_gate() is None
+
+    # 1 xe vào qua cổng (chưa chạm cảm biến ô đỗ), 0 đặt chỗ -> còn 3
+    p1 = StatePayload(
+        deviceId="ESP32_PARKING_01",
+        uptime=20,
+        freeSlots=4,
+        carsInLot=1,
+        freeSlotsByGate=3,
+        totalSlots=4,
+        slots={},
+    )
+    cache.apply_state(p1)
+    assert cache.get_cars_in_lot() == 1
+    assert cache.free_slots_by_gate() == 3
+    # free_slots_public vẫn đọc cảm biến ô đỗ (4 ô trống)
+    assert cache.free_slots_public() == 4
+
+    # Thêm 2 đặt chỗ còn hạn -> free_slots_by_gate = 4 - 1 - 2 = 1
+    now = datetime.now(timezone.utc)
+    cache.upsert_reservation(ReservationItem(id="r1", slotId="A1", plate="30A11111", expiresAt=now + timedelta(minutes=20)))
+    cache.upsert_reservation(ReservationItem(id="r2", slotId="A2", plate="30A22222", expiresAt=now + timedelta(minutes=20)))
+    assert cache.free_slots_by_gate() == 1
+
+    # Giá trị vượt giới hạn được kẹp về [0..4]
+    cache.set_cars_in_lot(7)
+    assert cache.get_cars_in_lot() == 4
+    assert cache.free_slots_by_gate() == 0
+
+    snap = cache.snapshot()
+    assert snap["carsInLot"] == 4
+    assert snap["freeSlotsByGate"] == 0
+
+

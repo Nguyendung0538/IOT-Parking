@@ -90,6 +90,13 @@ public:
     bool carJustEntered();
     bool carJustExited();
 
+    // Bộ đếm số xe đang ở trong bãi theo lượt qua Cổng VÀO / Cổng RA
+    void setCarsInLot(uint8_t count);
+    uint8_t getCarsInLot() const;
+    uint8_t getAvailableByGate(uint8_t reservedCount = 0) const;
+    bool isLotPhysicallyFull() const;
+    bool isLotFullForWalkIn(uint8_t reservedCount = 0) const;
+
     // Tên trạng thái dạng chuỗi phục vụ Telemetry & log
     const char* getStateName() const;
     const char* getEntryStateName() const;
@@ -118,6 +125,7 @@ private:
     // Cờ sự kiện hoàn tất 1 lượt xe
     bool flagJustEntered;
     bool flagJustExited;
+    uint8_t carsInLot;
 
     // Sequence ID dùng chung tăng dần để không bao giờ trùng giữa Cổng VÀO và Cổng RA
     uint32_t nextSeq;

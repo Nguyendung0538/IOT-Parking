@@ -17,6 +17,7 @@ GateController::GateController()
       barrierOutOpenTimestamp(0),
       flagJustEntered(false),
       flagJustExited(false),
+      carsInLot(0),
       nextSeq(0),
       seqIn(0),
       seqOut(0),
@@ -145,14 +146,21 @@ void GateController::updateEntryGate(bool parkingFull, unsigned long now) {
         case GATE_IN_IDLE:
             if (confirmedEntryOut) {
 #if ENABLE_WIFI
-                seqIn = ++nextSeq;
-                pendingInAuthPublish = true;
-                inAuthWaitTimestamp = now;
-                lastEvent = GATE_EVENT_WAITING_AUTH;
-                activePlate[0] = '\0';
-                assignedSlot[0] = '\0';
-                entryState = GATE_IN_WAIT_AUTH;
-                Serial.printf("[Gate IN] Xe den cong VAO -> Cho Edge AI auth (seq=%u)...\n", seqIn);
+                if (isLotPhysicallyFull()) {
+                    lastEvent = GATE_EVENT_BLOCKED_FULL;
+                    entryState = GATE_IN_BLOCKED_FULL;
+                    Serial.printf("[Gate IN] Tu choi xe vao: Bai da day %u/%u xe!\n", carsInLot, NUM_SLOTS);
+                } else {
+                    seqIn = ++nextSeq;
+                    pendingInAuthPublish = true;
+                    inAuthWaitTimestamp = now;
+                    lastEvent = GATE_EVENT_WAITING_AUTH;
+                    activePlate[0] = '\0';
+                    assignedSlot[0] = '\0';
+                    entryState = GATE_IN_WAIT_AUTH;
+                    Serial.printf("[Gate IN] Xe den cong VAO -> Cho Edge AI auth (seq=%u, carsInLot=%u/%u)...\n",
+                                  seqIn, carsInLot, NUM_SLOTS);
+                }
 #else
                 if (parkingFull) {
                     lastEvent = GATE_EVENT_BLOCKED_FULL;
@@ -226,12 +234,16 @@ void GateController::updateEntryGate(bool parkingFull, unsigned long now) {
 
             if (!confirmedEntryOut && !confirmedEntryIn) {
                 closeEntryBarrier();
+                if (carsInLot < NUM_SLOTS) {
+                    carsInLot++;
+                }
                 flagJustEntered = true;
                 if (lastEvent == GATE_EVENT_CAR_ENTERING || lastEvent == GATE_EVENT_TIMEOUT) {
                     lastEvent = GATE_EVENT_NONE;
                 }
                 entryState = GATE_IN_IDLE;
-                Serial.println(F("[Gate IN] Xe da VAO BAI HOAN TAT -> Dong barie VAO (0 deg)."));
+                Serial.printf("[Gate IN] Xe da VAO BAI HOAN TAT -> Dong barie VAO (0 deg). [carsInLot=%u/%u]\n",
+                              carsInLot, NUM_SLOTS);
             }
             break;
 
@@ -326,12 +338,16 @@ void GateController::updateExitGate(unsigned long now) {
 
             if (!confirmedExitIn && !confirmedExitOut) {
                 closeExitBarrier();
+                if (carsInLot > 0) {
+                    carsInLot--;
+                }
                 flagJustExited = true;
                 if (lastEvent == GATE_EVENT_CAR_EXITING || lastEvent == GATE_EVENT_TIMEOUT) {
                     lastEvent = GATE_EVENT_NONE;
                 }
                 exitState = GATE_OUT_IDLE;
-                Serial.println(F("[Gate OUT] Xe da ROI BAI HOAN TAT -> Dong barie RA (0 deg)."));
+                Serial.printf("[Gate OUT] Xe da ROI BAI HOAN TAT -> Dong barie RA (0 deg). [carsInLot=%u/%u]\n",
+                              carsInLot, NUM_SLOTS);
             }
             break;
 
@@ -552,6 +568,30 @@ bool GateController::carJustExited() {
     bool res = flagJustExited;
     flagJustExited = false;
     return res;
+}
+
+void GateController::setCarsInLot(uint8_t count) {
+    carsInLot = (count > NUM_SLOTS) ? NUM_SLOTS : count;
+}
+
+uint8_t GateController::getCarsInLot() const {
+    return carsInLot;
+}
+
+uint8_t GateController::getAvailableByGate(uint8_t reservedCount) const {
+    uint16_t occupiedAndReserved = static_cast<uint16_t>(carsInLot) + static_cast<uint16_t>(reservedCount);
+    if (occupiedAndReserved >= NUM_SLOTS) {
+        return 0;
+    }
+    return static_cast<uint8_t>(NUM_SLOTS - occupiedAndReserved);
+}
+
+bool GateController::isLotPhysicallyFull() const {
+    return carsInLot >= NUM_SLOTS;
+}
+
+bool GateController::isLotFullForWalkIn(uint8_t reservedCount) const {
+    return getAvailableByGate(reservedCount) == 0;
 }
 
 const char* GateController::getStateName() const {

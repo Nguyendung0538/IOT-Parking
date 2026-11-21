@@ -40,6 +40,10 @@ void setup() {
     Serial.println(F(" OK"));
     Serial.flush();
 
+    gate.setCarsInLot(parking.getOccupiedCount());
+    Serial.printf("[Init] Khoi tao so xe trong bai: %u/%u (tu cam bien o do)\n",
+                  gate.getCarsInLot(), NUM_SLOTS);
+
     // Khởi động DisplayManager (LCD + OLED qua I2C)
     Serial.print(F("[Init] DisplayManager..."));
     display.begin();
@@ -66,14 +70,19 @@ void loop() {
     }
 
     // 2. Cập nhật máy trạng thái Barie & Cảm biến cổng vào/ra (FSM + Fallback 8s)
-    gate.update(parking.isFull());
+    bool gateParkingFull = gate.isLotFullForWalkIn(parking.getReservedMaskCount());
+    gate.update(gateParkingFull);
 
     if (gate.carJustEntered()) {
-        Serial.println(F("\n[GATE NOTIFY] >> 1 XE VAO BAI THANH CONG! <<"));
+        Serial.printf("\n[GATE NOTIFY] >> 1 XE VAO BAI THANH CONG! (Xe trong bai: %u/%u, Con: %u) <<\n",
+                      gate.getCarsInLot(), NUM_SLOTS,
+                      gate.getAvailableByGate(parking.getReservedMaskCount()));
     }
 
     if (gate.carJustExited()) {
-        Serial.println(F("\n[GATE NOTIFY] >> 1 XE ROI BAI THANH CONG! <<"));
+        Serial.printf("\n[GATE NOTIFY] >> 1 XE ROI BAI THANH CONG! (Xe trong bai: %u/%u, Con: %u) <<\n",
+                      gate.getCarsInLot(), NUM_SLOTS,
+                      gate.getAvailableByGate(parking.getReservedMaskCount()));
     }
 
     // 3. Cập nhật giao diện màn hình LCD & OLED (Hiển thị nhận diện, điều hướng ô đỗ)

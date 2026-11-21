@@ -255,3 +255,22 @@ def test_mqtt_bridge_clears_waiting_exit_when_blocked_returns_idle(dummy_cloud):
     assert dummy_cloud.clear_waiting_exit_calls == 1
 
 
+def test_mqtt_bridge_syncs_cars_in_lot_from_gate_request(dummy_cloud):
+    """Gói gate/request có carsInLot phải cập nhật ngay vào StateCache."""
+    cache = StateCache(slot_ids=["A1", "A2", "B1", "B2"])
+    bridge = MqttBridge(cache=cache, settings=settings, cloud=dummy_cloud)
+
+    req_json = json.dumps({
+        "deviceId": "ESP32_PARKING_01",
+        "seq": 210,
+        "direction": "IN",
+        "freeSlots": 1,
+        "carsInLot": 3,
+        "offlineFallback": False,
+    }).encode("utf-8")
+
+    bridge._handle_gate_request(req_json)
+    assert cache.get_cars_in_lot() == 3
+    assert cache.free_slots_by_gate() == 1
+
+

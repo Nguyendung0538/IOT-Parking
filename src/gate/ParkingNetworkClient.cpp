@@ -12,6 +12,7 @@ ParkingNetworkClient::ParkingNetworkClient()
       prevBarrierInOpen(false),
       prevBarrierOutOpen(false),
       prevGateOutState(GATE_OUT_IDLE),
+      prevCarsInLot(255),
       offlineQueueCount(0),
       offlineQueueHead(0),
       offlineQueueTail(0) {
@@ -206,7 +207,9 @@ void ParkingNetworkClient::update(ParkingMonitor& parking, GateController& gate)
     uint32_t reqSeq = 0;
     const char* reqDir = nullptr;
     while (gate.consumePendingAuthRequest(reqSeq, reqDir)) {
-        publishGateRequest(reqSeq, reqDir, parking.getTotalAvailable());
+        publishGateRequest(reqSeq, reqDir,
+                           gate.getAvailableByGate(parking.getReservedMaskCount()),
+                           gate.getCarsInLot());
     }
 
     // 3. Xử lý sự kiện Offline Fallback nếu có
@@ -235,6 +238,11 @@ void ParkingNetworkClient::update(ParkingMonitor& parking, GateController& gate)
     if (gate.getExitState() != prevGateOutState) {
         stateChanged = true;
         prevGateOutState = gate.getExitState();
+    }
+
+    if (gate.getCarsInLot() != prevCarsInLot) {
+        stateChanged = true;
+        prevCarsInLot = gate.getCarsInLot();
     }
 
     for (uint8_t i = 0; i < NUM_SLOTS; i++) {
@@ -277,6 +285,8 @@ void ParkingNetworkClient::publishState(const ParkingMonitor& parking, const Gat
     doc["deviceId"] = DEVICE_ID;
     doc["uptime"] = millis() / 1000;
     doc["freeSlots"] = parking.getTotalAvailable();
+    doc["carsInLot"] = gate.getCarsInLot();
+    doc["freeSlotsByGate"] = gate.getAvailableByGate(parking.getReservedMaskCount());
     doc["totalSlots"] = NUM_SLOTS;
     doc["barrierOpen"] = gate.isBarrierOpen();
     doc["barrierInOpen"] = gate.isBarrierInOpen();
@@ -315,7 +325,7 @@ void ParkingNetworkClient::publishState(const ParkingMonitor& parking, const Gat
 #endif
 }
 
-void ParkingNetworkClient::publishGateRequest(uint32_t seq, const char* direction, uint8_t freeSlots) {
+void ParkingNetworkClient::publishGateRequest(uint32_t seq, const char* direction, uint8_t freeSlots, uint8_t carsInLot) {
 #if ENABLE_WIFI
     if (!mqttClient.connected()) {
         Serial.printf("[ParkingNetworkClient] Khong the gui Gate Request (seq=%u): MQTT chua ket noi!\n", seq);
@@ -327,6 +337,7 @@ void ParkingNetworkClient::publishGateRequest(uint32_t seq, const char* directio
     doc["seq"] = seq;
     doc["direction"] = direction;
     doc["freeSlots"] = freeSlots;
+    doc["carsInLot"] = carsInLot;
     doc["timestamp"] = millis();
 
     String payload;
@@ -342,5 +353,6 @@ void ParkingNetworkClient::publishGateRequest(uint32_t seq, const char* directio
     (void)seq;
     (void)direction;
     (void)freeSlots;
+    (void)carsInLot;
 #endif
 }

@@ -32,6 +32,7 @@ class StateCache:
         self._gate_out_state: str = "IDLE"
         self._uptime: int = 0
         self._last_state_at: float = 0.0
+        self._cars_in_lot: Optional[int] = None
 
         # Trạng thái kết nối phần cứng (từ MQTT LWT)
         self._gate_online: bool = False
@@ -79,6 +80,9 @@ class StateCache:
             self._gate_out_state = payload.gateOutState or "IDLE"
             self._last_state_at = time.time()
 
+            if payload.carsInLot is not None:
+                self._cars_in_lot = max(0, min(len(self.slot_ids), int(payload.carsInLot)))
+
             for slot_id in self.slot_ids:
                 if slot_id in payload.slots:
                     new_occ = payload.slots[slot_id].occupied
@@ -92,6 +96,17 @@ class StateCache:
     def get_sensor_occupied(self) -> Dict[str, bool]:
         with self._lock:
             return dict(self._sensor_occupied)
+
+    def set_cars_in_lot(self, count: Optional[int]) -> None:
+        with self._lock:
+            if count is None:
+                self._cars_in_lot = None
+            else:
+                self._cars_in_lot = max(0, min(len(self.slot_ids), int(count)))
+
+    def get_cars_in_lot(self) -> Optional[int]:
+        with self._lock:
+            return self._cars_in_lot
 
     # ==========================================
     # TRẠNG THÁI THIẾT BỊ ONLINE / OFFLINE (LWT)
@@ -295,6 +310,15 @@ class StateCache:
                     count += 1
             return count
 
+    def free_slots_by_gate(self) -> Optional[int]:
+        """Số chỗ trống dựa trên bộ đếm xe qua cổng và số ô đang đặt trước."""
+        mask = self.compute_reserved_mask()
+        with self._lock:
+            if self._cars_in_lot is None:
+                return None
+            reserved_count = sum(1 for v in mask.values() if v)
+            return max(0, len(self.slot_ids) - self._cars_in_lot - reserved_count)
+
     # ==========================================
     # HÀNG ĐỢI REQUEST (PHỤC VỤ PHASE S5)
     # ==========================================
@@ -369,6 +393,8 @@ class StateCache:
                     for s_id, item in self._active_exit_requests.items()
                 },
                 "freeSlotsPublic": self.free_slots_public(),
+                "carsInLot": self._cars_in_lot,
+                "freeSlotsByGate": self.free_slots_by_gate(),
                 "pendingRequestsCount": len(self._pending_requests),
             }
 

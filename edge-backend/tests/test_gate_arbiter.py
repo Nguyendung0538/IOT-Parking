@@ -43,8 +43,9 @@ def arbiter(test_cache, test_mqtt):
     a.stop()
 
 
-def test_s5_t1_guest_empty_lot(arbiter):
+def test_s5_t1_guest_empty_lot(arbiter, monkeypatch):
     """S5-T1: Khách vãng lai vào bãi hoàn toàn trống -> Cấp ô A1, OPEN."""
+    monkeypatch.setattr(settings, "ASSIGN_SLOT_ON_ENTRY", True)
     dec = arbiter.decide(
         seq=1,
         direction="IN",
@@ -62,8 +63,9 @@ def test_s5_t1_guest_empty_lot(arbiter):
     assert dec.is_duplicate is False
 
 
-def test_s5_t2_protect_reserved_slot(arbiter, test_cache):
+def test_s5_t2_protect_reserved_slot(arbiter, test_cache, monkeypatch):
     """S5-T2: Ô A1 đã được người khác đặt trước. Khách vãng lai vào -> Bỏ qua A1, cấp A2."""
+    monkeypatch.setattr(settings, "ASSIGN_SLOT_ON_ENTRY", True)
     now = datetime.now(timezone.utc)
     test_cache.upsert_reservation(
         ReservationItem(
@@ -327,8 +329,9 @@ def test_s5_t9_camera_timeout_failsafe(arbiter, test_mqtt, monkeypatch):
     assert call_args["plate"] == "KHONG RO"
 
 
-def test_s5_t10_idempotency_duplicate_seq(arbiter):
+def test_s5_t10_idempotency_duplicate_seq(arbiter, monkeypatch):
     """S5-T10: Gửi 2 lần cùng seq -> Lần 2 trả duplicate=True và không tạo quyết định mới."""
+    monkeypatch.setattr(settings, "ASSIGN_SLOT_ON_ENTRY", True)
     dec1 = arbiter.decide(
         seq=50,
         direction="IN",
@@ -413,5 +416,85 @@ def test_exit_plate_not_in_lot_triggers_wait_manual(arbiter, test_cache):
     )
     assert dec_ok.action == "OPEN"
     assert dec_ok.status == "ok"
+
+
+def test_gate_counter_blocks_walkin_when_lot_full_by_gate(arbiter, test_cache):
+    """4 xe đã qua cổng (carsInLot=4) dù cảm biến ô đỗ vẫn trống -> từ chối khách vãng lai."""
+    test_cache.set_cars_in_lot(4)
+
+    dec = arbiter.decide(
+        seq=301,
+        direction="IN",
+        plate_raw="51A99999",
+        plate_normalized="51A99999",
+        plate_display="51A-999.99",
+        confidence=0.92,
+        is_valid=True,
+    )
+    assert dec.action == "DENY"
+    assert dec.status == "denied_full"
+    assert dec.deny_reason == "FULL"
+    assert "lot_full" in dec.flags
+
+
+def test_gate_counter_with_reserved_deduction(arbiter, test_cache):
+    """3 xe trong bãi + 1 ô đặt trước (cảm biến ô đỗ vẫn trống):
+    - Khách vãng lai bị chặn (3 + 1 >= 4)
+    - Chủ xe đặt trước vẫn được vào ô đã đặt
+    - Khi carsInLot=4 (full vật lý), ngay cả chủ xe đặt trước cũng bị từ chối.
+    """
+    now = datetime.now(timezone.utc)
+    test_cache.upsert_reservation(
+        ReservationItem(
+            id="res_hold_1",
+            slotId="B2",
+            plate="30A77777",
+            expiresAt=now + timedelta(minutes=30),
+        )
+    )
+    test_cache.set_cars_in_lot(3)
+
+    # 1. Khách vãng lai bị chặn vì 3 xe trong bãi + 1 ô đặt trước = 4/4
+    dec_walkin = arbiter.decide(
+        seq=302,
+        direction="IN",
+        plate_raw="51A88888",
+        plate_normalized="51A88888",
+        plate_display="51A-888.88",
+        confidence=0.91,
+        is_valid=True,
+    )
+    assert dec_walkin.action == "DENY"
+    assert dec_walkin.deny_reason == "FULL"
+    assert dec_walkin.status == "denied_full"
+
+    # 2. Chủ xe có reservation vẫn được vào đúng ô B2
+    dec_owner = arbiter.decide(
+        seq=303,
+        direction="IN",
+        plate_raw="30A77777",
+        plate_normalized="30A77777",
+        plate_display="30A-777.77",
+        confidence=0.95,
+        is_valid=True,
+    )
+    assert dec_owner.action == "OPEN"
+    assert dec_owner.assigned_slot == "B2"
+    assert dec_owner.matched_reservation_id == "res_hold_1"
+
+    # 3. Nếu carsInLot=4 (4 xe đã vào vật lý), chủ xe đặt chỗ khác cũng bị chặn
+    test_cache.set_cars_in_lot(4)
+    dec_owner_full = arbiter.decide(
+        seq=304,
+        direction="IN",
+        plate_raw="30A77777",
+        plate_normalized="30A77777",
+        plate_display="30A-777.77",
+        confidence=0.95,
+        is_valid=True,
+    )
+    assert dec_owner_full.action == "DENY"
+    assert dec_owner_full.status == "denied_reserved_taken"
+    assert dec_owner_full.deny_reason == "RESERVED_SLOT_TAKEN"
 
 

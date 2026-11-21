@@ -32,7 +32,7 @@ public:
     void publishState(const ParkingMonitor& parking, const GateController& gate);
 
     // Gửi yêu cầu xác thực xe vào/ra lên Edge Server
-    void publishGateRequest(uint32_t seq, const char* direction, uint8_t freeSlots);
+    void publishGateRequest(uint32_t seq, const char* direction, uint8_t freeSlots, uint8_t carsInLot);
 
 private:
     WiFiClient wifiClient;
@@ -51,6 +51,7 @@ private:
     bool prevBarrierInOpen;
     bool prevBarrierOutOpen;
     GateOutState prevGateOutState;
+    uint8_t prevCarsInLot;
 
     // Hàng đợi lưu các sự kiện Offline Fallback khi mất mạng
     static const uint8_t OFFLINE_QUEUE_CAPACITY = 8;

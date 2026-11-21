@@ -264,6 +264,8 @@ class MqttBridge:
                     flags=["offline_fallback"],
                 )
         else:
+            if payload.carsInLot is not None:
+                self.cache.set_cars_in_lot(payload.carsInLot)
             self.cache.add_pending_request(payload.seq, payload.direction)
             if self.arbiter:
                 self.arbiter.on_gate_request(payload.seq, payload.direction)

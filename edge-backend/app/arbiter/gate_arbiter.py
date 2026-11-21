@@ -303,6 +303,9 @@ class GateArbiter:
 
         sensor_occ = self.cache.get_sensor_occupied()
         reserved_mask = self.cache.compute_reserved_mask()
+        cars_in_lot = self.cache.get_cars_in_lot()
+        total_slots = len(self.cache.slot_ids)
+        reserved_count = sum(1 for v in reserved_mask.values() if v)
 
         # Kiểm tra xem biển số có khớp reservation active nào không
         matched_res = None
@@ -316,7 +319,25 @@ class GateArbiter:
             res_slot = matched_res.slotId
             is_slot_occupied = sensor_occ.get(res_slot, False)
 
-            if not is_slot_occupied:
+            if cars_in_lot is not None and cars_in_lot >= total_slots:
+                flags.append("reserved_slot_occupied_and_lot_full")
+                decision = ArbiterDecision(
+                    seq=seq,
+                    direction="IN",
+                    action="DENY",
+                    status="denied_reserved_taken",
+                    assigned_slot="",
+                    matched_reservation_id=matched_res.id,
+                    deny_reason="RESERVED_SLOT_TAKEN",
+                    flags=flags,
+                    plate_raw=plate_raw,
+                    plate_normalized=plate_normalized,
+                    plate_display=plate_display,
+                    plate_for_lcd=plate_for_lcd,
+                    confidence=confidence,
+                    is_duplicate=False,
+                )
+            elif not is_slot_occupied:
                 # Ô đã đặt đang trống -> Gán đúng ô đã đặt cho xe có reservation
                 flags.append("matched_reservation")
                 decision = ArbiterDecision(
@@ -387,12 +408,15 @@ class GateArbiter:
         # ----------------------------------------------------
         # NHÁNH 3.B: KHÁCH VÃNG LAI HOẶC KHÔNG RÕ BIỂN SỐ
         # ----------------------------------------------------
-        # Tìm ô trống khả dụng đầu tiên: !sensorOccupied && !isReserved
+        gate_full_for_walkin = (cars_in_lot is not None) and ((cars_in_lot + reserved_count) >= total_slots)
+
+        # Tìm ô trống khả dụng đầu tiên: !sensorOccupied && !isReserved (nếu chưa đầy theo bộ đếm cổng)
         free_slot = None
-        for s in self.cache.slot_ids:
-            if not sensor_occ.get(s, False) and not reserved_mask.get(s, False):
-                free_slot = s
-                break
+        if not gate_full_for_walkin:
+            for s in self.cache.slot_ids:
+                if not sensor_occ.get(s, False) and not reserved_mask.get(s, False):
+                    free_slot = s
+                    break
 
         if free_slot is not None:
             if is_valid:

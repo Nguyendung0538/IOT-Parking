@@ -11,13 +11,13 @@
 // CẤU HÌNH WI-FI DÙNG CHUNG (GATE & CAM)
 // ==========================================
 #define ENABLE_WIFI true // Đổi thành true khi kết nối Wi-Fi thực tế
-#define WIFI_SSID "Thanh Tan"
-#define WIFI_PASSWORD "Abc123456"
+#define WIFI_SSID "Meldyy"
+#define WIFI_PASSWORD "aaaaaaaa"
 
 // ==========================================
 // ĐỊA CHỈ MÁY TRẠM EDGE SERVER (REPO 1)
 // ==========================================
-#define EDGE_SERVER_IP "192.168.1.7"
+#define EDGE_SERVER_IP "192.168.137.1"
 #define MQTT_BROKER_HOST EDGE_SERVER_IP
 #define MQTT_BROKER_PORT 1883
 #define MQTT_BUFFER_SIZE 1024

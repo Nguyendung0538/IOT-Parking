@@ -25,6 +25,8 @@ class StatePayload(BaseModel):
     deviceId: str = "ESP32_PARKING_01"
     uptime: int = 0
     freeSlots: int = 0
+    carsInLot: Optional[int] = None
+    freeSlotsByGate: Optional[int] = None
     totalSlots: int = 4
     barrierOpen: bool = False
     barrierInOpen: Optional[bool] = None
@@ -44,6 +46,7 @@ class GateRequestPayload(BaseModel):
     seq: int
     direction: str = "IN"  # "IN" | "OUT"
     freeSlots: int = 0
+    carsInLot: Optional[int] = None
     timestamp: Optional[int] = None
     offlineFallback: bool = False
     clientTimestamp: Optional[int] = None

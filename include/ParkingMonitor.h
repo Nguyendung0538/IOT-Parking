@@ -37,6 +37,7 @@ public:
     uint8_t getTotalAvailable() const;
     uint8_t getOccupiedCount() const;
     uint8_t getReservedCount() const;
+    uint8_t getReservedMaskCount() const;
 
     // Bãi đỗ xe đã đầy hoàn toàn (không còn ô khả dụng)
     bool isFull() const;

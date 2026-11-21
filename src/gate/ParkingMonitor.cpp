@@ -134,6 +134,16 @@ uint8_t ParkingMonitor::getReservedCount() const {
     return count;
 }
 
+uint8_t ParkingMonitor::getReservedMaskCount() const {
+    uint8_t count = 0;
+    for (uint8_t i = 0; i < NUM_SLOTS; i++) {
+        if (reservedState[i]) {
+            count++;
+        }
+    }
+    return count;
+}
+
 bool ParkingMonitor::isFull() const {
     return getTotalAvailable() == 0;
 }
